@@ -27,8 +27,8 @@ default_funcs = {
 reduced_time_dict = {
     "pre_rotation_end": (-1000, 0),
     "nav_end": (-1000, 0),
-    "relevant_crossing_x":, (-500, 500),
-    "relevant_crossing_y":, (-500, 500),
+    "relevant_crossing_x": (-500, 500),
+    "relevant_crossing_y": (-500, 500),
     "post_rotation_end": (-1000, 0),
     "choice_approach_end": (-1000, 0),
     "choice_start": (-500, 500),
