@@ -156,6 +156,14 @@ def extract_time_field(data, t_field, extract_field):
     return fvs
 
 
+def discretize_rotation(rots, cents=(0, 90, 180, 270), width=90):
+    rots = np.expand_dims(rots.to_numpy(), 1)
+    cents = np.expand_dims(cents, 0)
+    dists = u.normalize_periodic_range(rots - cents, radians=False)
+    bins = np.argmin(np.abs(dists), axis=1)
+    return bins
+
+
 def load_gulli_hashim_data_folder(
         folder,
         session_template=session_template,
@@ -210,6 +218,9 @@ def load_gulli_hashim_data_folder(
         )
         data_all["pre_choice_rotation"] = extract_time_field(
             data_all, "post_rotation_end", "rotation_tc",
+        )
+        data_all["choice_rotation"] = discretize_rotation(
+            data_all["pre_choice_rotation"],
         )
         out = find_crossings(
             data_all["pos_x"]

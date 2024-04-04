@@ -32,6 +32,7 @@ reduced_time_dict = {
     "post_rotation_end": (-1000, 0),
     "choice_approach_end": (-1000, 0),
     "choice_start": (-500, 500),
+    "approach_start": (-500, 500),
     "approach_end": (-1000, 0),
 }
 
