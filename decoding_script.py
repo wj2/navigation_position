@@ -62,7 +62,10 @@ if __name__ == '__main__':
         date="-".join(dates),
         jobid=args.jobid,
     )
+    
     out_fig_path = os.path.join(args.output_folder, out_fn + ".pdf")
+    print(out_fig_path)
     f.savefig(out_fig_path, transparent=True, bbox_inches="tight")
+    
     out_arg_path = os.path.join(args.output_folder, out_fn + ".pkl")
     pickle.dump(vars(args), open(out_arg_path, "wb"))

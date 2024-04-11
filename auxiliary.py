@@ -73,6 +73,8 @@ info_rename_dict = {
     "UserVars.RestructuredVRData.Position_X": "pos_x",
     "UserVars.RestructuredVRData.Position_Y": "pos_z",
     "UserVars.RestructuredVRData.Position_Z": "pos_y",
+    "RestructuredAnalog.Eye.0": "eye_x",
+    "RestructuredAnalog.Eye.1": "eye_y",
 }
 
 

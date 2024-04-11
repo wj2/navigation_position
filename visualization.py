@@ -223,6 +223,7 @@ def visualize_decoding_dict(dec_dict, color_dict=None, axs=None, fwid=2, **kwarg
             n_cols,
             figsize=(fwid * n_cols, fwid * n_rows),
             sharey=True,
+            sharex="col",
         )
     else:
         f = None
