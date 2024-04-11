@@ -166,6 +166,12 @@ def discretize_rotation(rots, cents=(0, 90, 180, 270), width=90):
     return bins
 
 
+date_task_dict = {
+    "20231223": "IsEast",
+    "20240112": "IsNorth",
+}
+
+
 def load_gulli_hashim_data_folder(
         folder,
         session_template=session_template,
@@ -173,6 +179,7 @@ def load_gulli_hashim_data_folder(
         exclude_last_n_trls=None,
         rename_dicts=None,
         load_only_nth_files=None,
+        date_task_dict=date_task_dict,
 ):
     if rename_dicts is None:
         rename_dicts = (timing_rename_dict, info_rename_dict)
@@ -210,12 +217,14 @@ def load_gulli_hashim_data_folder(
         data_all["completed_trial"] = np.isin(data_all["TrialError"], (0, 6))
         data_all["correct_trial"] = data_all["TrialError"] == 0
         data_all = rename_fields(data_all, *rename_dicts)
+        
+        task_key = date_task_dict.get(fl_info["date"])
         data_all["white_right"] = np.logical_or(
             np.logical_and(
-                data_all["IsEast"] == 1, data_all["target_right"] == 1,
+                data_all[task_key] == 1, data_all["target_right"] == 1,
             ),
             np.logical_and(
-                data_all["IsEast"] == 0, data_all["target_right"] == 0,
+                data_all[task_key] == 0, data_all["target_right"] == 0,
             ),
         )
         data_all["pre_choice_rotation"] = extract_time_field(
