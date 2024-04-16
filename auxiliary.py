@@ -1,12 +1,8 @@
 
 import os
-import scipy.io as sio
 import scipy.ndimage as snd
-import skimage.io as skio
-import re
 import numpy as np
 import pandas as pd
-import pickle
 
 import general.utility as u
 import general.data_io as gio
@@ -15,6 +11,16 @@ import general.data_io as gio
 BASEFOLDER = "../data/navigation_position/"
 FIGFOLDER = "navigation_position/figs/"
 session_template = "(?P<animal>[a-zA-Z]+)_(?P<date>[0-9]+)"
+
+
+def load_sessions(folder=BASEFOLDER, correct_only=False, uninstructed_only=True):
+    data = gio.Dataset.from_readfunc(
+        load_gulli_hashim_data_folder, folder,
+    )
+    data_use = mask_completed_trials(data, correct_only=correct_only)
+    if uninstructed_only:
+        data_use = mask_uninstructed_trials(data_use)
+    return data_use
 
 
 def load_session_files(

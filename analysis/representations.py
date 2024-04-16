@@ -1,10 +1,4 @@
-
-import numpy as np
 import sklearn.neighbors as sknn
-
-import general.neural_analysis as na 
-
-import navigation_position.auxiliary as npa
 
 
 def equals_one(x):
@@ -13,6 +7,7 @@ def equals_one(x):
 
 def equal_0(x):
     return x == 0
+
 
 def less_than_180(x):
     return x < 180
@@ -38,8 +33,8 @@ reduced_time_dict = {
 
 
 default_dec_variables = {
-    "relevant position": "IsEast",
-    "irrelevant position": "IsNorth",
+    "east-west position": "IsEast",
+    "north-south position": "IsNorth",
     "white side": "white_right",
     "correct side": "target_right",
     "choice side": "chose_right",
@@ -49,7 +44,12 @@ default_dec_variables = {
 }
 
 
-def make_variable_masks(data, dec_variables=default_dec_variables, func_dict=None):
+def make_variable_masks(
+    data,
+    dec_variables=default_dec_variables,
+    func_dict=None,
+    and_mask=None,
+):
     """
     The variables of interest are:
     position (binary and continuous), correct side, view direction, choice
@@ -61,18 +61,23 @@ def make_variable_masks(data, dec_variables=default_dec_variables, func_dict=Non
         func = func_dict.get(k, equals_one)
         m1 = func(data[v])
         m2 = func(data[v]).rs_not()
+        if and_mask is not None:
+            m1 = m1.rs_and(and_mask)
+            m2 = m2.rs_and(and_mask)
         masks[k] = (m1, m2)
     return masks
 
 
 default_contrast_variables = {
-    "relevant_position": ("IsNorth",),
-    "irrelevant_position": ("IsEast",),
+    "east-west position": ("IsNorth",),
+    "north-south position": ("IsEast",),
 }
 
 
 def make_variable_generalization_masks(
-        data, contrast_variables=default_contrast_variables, func_dict=None,
+    data,
+    contrast_variables=default_contrast_variables,
+    func_dict=None,
 ):
     masks = make_variable_masks(data)
     masks_gen = {}
@@ -86,22 +91,22 @@ def make_variable_generalization_masks(
             fcv = "{} x {}".format(k, cv)
             masks_gen[fcv] = ((m1_p, m2_p), (m1_n, m2_n))
     return masks_gen
-    
+
 
 def decode_masks(
-        data,
-        mask1,
-        mask2,
-        tbeg,
-        tend,
-        tzf,
-        winsize=500,
-        stepsize=50,
-        gen_mask1=None,
-        gen_mask2=None,
-        use_nearest_neighbors=False,
-        n_neighbors=5,
-        **kwargs,
+    data,
+    mask1,
+    mask2,
+    tbeg,
+    tend,
+    tzf,
+    winsize=500,
+    stepsize=50,
+    gen_mask1=None,
+    gen_mask2=None,
+    use_nearest_neighbors=False,
+    n_neighbors=5,
+    **kwargs,
 ):
     if use_nearest_neighbors:
         kwargs["model"] = sknn.KNeighborsClassifier
@@ -135,4 +140,3 @@ def decode_times(data, time_dict=None, dec_vars=None, **kwargs):
             out = decode_masks(data, *k_masks, *ts, time_k, **kwargs, ret_pops=True)
             out_dict[time_k][var_k] = out
     return out_dict
-    
