@@ -52,6 +52,8 @@ if __name__ == "__main__":
     data_use = npa.mask_completed_trials(data, correct_only=args.correct_only)
     if not args.include_instructed:
         data_use = npa.mask_uninstructed_trials(data_use)
+    if args.balance_fields is not None:
+        args.balance_fields = list(args.balance_fields)        
 
     decoder_kwargs = decoder_dict.get(args.decoder, {})
     out_all = npra.decode_times(
@@ -73,7 +75,6 @@ if __name__ == "__main__":
     )
 
     out_fig_path = os.path.join(args.output_folder, out_fn + ".pdf")
-    print(out_fig_path)
     f.savefig(out_fig_path, transparent=True, bbox_inches="tight")
 
     out_arg_path = os.path.join(args.output_folder, out_fn + ".pkl")
