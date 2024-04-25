@@ -1,4 +1,3 @@
-
 import os
 import scipy.ndimage as snd
 import numpy as np
@@ -15,7 +14,8 @@ session_template = "(?P<animal>[a-zA-Z]+)_(?P<date>[0-9]+)"
 
 def load_sessions(folder=BASEFOLDER, correct_only=False, uninstructed_only=True):
     data = gio.Dataset.from_readfunc(
-        load_gulli_hashim_data_folder, folder,
+        load_gulli_hashim_data_folder,
+        folder,
     )
     data_use = mask_completed_trials(data, correct_only=correct_only)
     if uninstructed_only:
@@ -24,17 +24,19 @@ def load_sessions(folder=BASEFOLDER, correct_only=False, uninstructed_only=True)
 
 
 def load_session_files(
-        folder,
-        spikes="spike_times.pkl",
-        bhv="[0-9]+_[a-z]+_VR_behave\\.pkl",
-        good_neurs="good_neurons.pkl",
+    folder,
+    spikes="spike_times.pkl",
+    bhv="[0-9]+_[a-z]+_VR_behave\\.pkl",
+    good_neurs="good_neurons.pkl",
 ):
     out_dict = {}
     out_dict["spikes"] = pd.read_pickle(open(os.path.join(folder, spikes), "rb"))
     bhv_fl = u.get_matching_files(folder, bhv)[0]
     out_dict["bhv"] = pd.read_pickle(open(bhv_fl, "rb"))
 
-    out_dict["good_neurs"] = pd.read_pickle(open(os.path.join(folder, good_neurs), "rb"))
+    out_dict["good_neurs"] = pd.read_pickle(
+        open(os.path.join(folder, good_neurs), "rb")
+    )
     return out_dict
 
 
@@ -74,6 +76,8 @@ info_rename_dict = {
     "Float5_IsTestCondition": "generalization_trial",
     "Float8_IsNorth": "IsNorth",
     "UserVars.ChoseWhite": "chose_white",
+    "UserVars.ChoseBlue": "chose_blue",
+    "UserVars.ChosePink": "chose_pink",
     "UserVars.ChoseRight": "chose_right",
     "UserVars.RestructuredVRData.Rotation": "rotation_tc",
     "UserVars.RestructuredVRData.Position_X": "pos_x",
@@ -81,6 +85,9 @@ info_rename_dict = {
     "UserVars.RestructuredVRData.Position_Z": "pos_y",
     "RestructuredAnalog.Eye.0": "eye_x",
     "RestructuredAnalog.Eye.1": "eye_y",
+    "UserVars.VR_Trial.Fix_Position_World.x": "eye_world_x",
+    "UserVars.VR_Trial.Fix_Position_World.y": "eye_world_z",
+    "UserVars.VR_Trial.Fix_Position_World.z": "eye_world_y",
 }
 
 
@@ -98,7 +105,7 @@ def find_crossings(trl_pos, border=500, thresh=2):
         for sli in slices:
             event_pos = relative_border[sli]
             s_pre = np.sign(event_pos[0])
-            s_post = np.sign(event_pos[-1]) 
+            s_post = np.sign(event_pos[-1])
             cross = s_pre * s_post
             direction = s_pre < s_post
             cross_ind = np.argmin(near_border[sli])
@@ -111,31 +118,40 @@ def find_crossings(trl_pos, border=500, thresh=2):
     return cross_times, cross_dir
 
 
-def get_relevant_crossing(crossings, decision_times):
+def get_relevant_crossing(crossings, crossing_dirs, decision_times):
     rel_time = np.zeros(len(crossings))
     rel_time[:] = np.nan
+    rel_dir = np.zeros(len(crossings))
+    rel_dir[:] = np.nan
     for i, crosses_i in enumerate(crossings.to_numpy()):
         crosses_i = np.array(crosses_i)
         mask_i = crosses_i < decision_times.iloc[i]
         crosses_i = crosses_i[mask_i]
+        crossing_dir_i = np.array(crossing_dirs[i])[mask_i]
         if len(crosses_i) > 0:
             rel_time[i] = crosses_i[-1]
-    return rel_time
+            rel_dir[i] = crossing_dir_i[-1]
+    return rel_time, rel_dir
 
 
 def rename_fields(df, *dicts):
     full_dict = {}
     list(full_dict.update(d) for d in dicts)
     for old_name, new_name in full_dict.items():
-        df[new_name] = df[old_name]
+        if old_name in df.columns:
+            rename = df[old_name]
+        else:
+            rename = np.ones(len(df)) * np.nan
+            print("no {} in the columns".format(old_name))
+        df[new_name] = rename
     return df
 
 
 def mask_completed_trials(
-        data,
-        correct_only=False,
-        completed_field="completed_trial",
-        correct_field="correct_trial",
+    data,
+    correct_only=False,
+    completed_field="completed_trial",
+    correct_field="correct_trial",
 ):
     mask = data[completed_field]
     if correct_only:
@@ -144,8 +160,8 @@ def mask_completed_trials(
 
 
 def mask_uninstructed_trials(
-        data,
-        instructed_field="IsInstructed",
+    data,
+    instructed_field="IsInstructed",
 ):
     mask = data[instructed_field] == 0
     return data.mask(mask)
@@ -164,7 +180,7 @@ def extract_time_field(data, t_field, extract_field):
     return fvs
 
 
-def discretize_rotation(rots, cents=(0, 90, 180, 270), width=90):
+def discretize_rotation(rots, cents=(0, 90, 180, 270)):
     rots = np.expand_dims(rots.to_numpy(), 1)
     cents = np.expand_dims(cents, 0)
     dists = u.normalize_periodic_range(rots - cents, radians=False)
@@ -172,20 +188,38 @@ def discretize_rotation(rots, cents=(0, 90, 180, 270), width=90):
     return bins
 
 
+def get_last_choices(choices, mask=None, n_back=1):
+    if mask is None:
+        mask = np.ones(len(choices), dtype=bool)
+    last_choice = np.zeros(len(choices))
+    last_choice[:] = np.nan
+    inds = np.where(mask)[0]
+    for i, ind1 in enumerate(inds[n_back:]):
+        # ind0 is ith correct decision
+        # ind1 is i + nth correct decision
+        # fill from i + n - 1 to i + n
+        # with ith decision
+        ind0 = inds[i]
+        ind_last = inds[n_back + i - 1]
+        last_choice[ind_last + 1:ind1 + 1] = choices[ind0]
+    return last_choice
+
+
 date_task_dict = {
     "20231223": "IsEast",
     "20240112": "IsNorth",
+    "20240115": "IsNorth",
 }
 
 
 def load_gulli_hashim_data_folder(
-        folder,
-        session_template=session_template,
-        max_files=np.inf,
-        exclude_last_n_trls=None,
-        rename_dicts=None,
-        load_only_nth_files=None,
-        date_task_dict=date_task_dict,
+    folder,
+    session_template=session_template,
+    max_files=np.inf,
+    exclude_last_n_trls=None,
+    rename_dicts=None,
+    load_only_nth_files=None,
+    date_task_dict=date_task_dict,
 ):
     if rename_dicts is None:
         rename_dicts = (timing_rename_dict, info_rename_dict)
@@ -206,16 +240,15 @@ def load_gulli_hashim_data_folder(
         monkeys.append(fl_info["animal"])
         n_neurs.append(len(data_fl["good_neurs"]))
         neur_regions, spikes = organize_spikes(
-            data_fl["spikes"], data_fl["good_neurs"],
+            data_fl["spikes"],
+            data_fl["good_neurs"],
         )
         data_all = data_fl["bhv"]["data_frame"]
         if len(data_all) > len(spikes):
             diff = len(data_all) - len(spikes)
             print(
                 "difference in length between data ({}) and spikes ({})"
-                "in file {}".format(
-                    len(data_all), len(spikes), fl
-                )
+                "in file {}".format(len(data_all), len(spikes), fl)
             )
             data_all = data_all[:-diff].copy()
         data_all["spikeTimes"] = spikes
@@ -223,36 +256,66 @@ def load_gulli_hashim_data_folder(
         data_all["completed_trial"] = np.isin(data_all["TrialError"], (0, 6))
         data_all["correct_trial"] = data_all["TrialError"] == 0
         data_all = rename_fields(data_all, *rename_dicts)
-        
+
+        print(fl_info["date"])
         task_key = date_task_dict.get(fl_info["date"])
         data_all["white_right"] = np.logical_or(
             np.logical_and(
-                data_all[task_key] == 1, data_all["target_right"] == 1,
+                data_all[task_key] == 1,
+                data_all["target_right"] == 1,
             ),
             np.logical_and(
-                data_all[task_key] == 0, data_all["target_right"] == 0,
+                data_all[task_key] == 0,
+                data_all["target_right"] == 0,
+            ),
+        )
+        data_all["pink_right"] = np.logical_or(
+            np.logical_and(
+                data_all[task_key] == 1,
+                data_all["target_right"] == 1,
+            ),
+            np.logical_and(
+                data_all[task_key] == 0,
+                data_all["target_right"] == 0,
             ),
         )
         data_all["pre_choice_rotation"] = extract_time_field(
-            data_all, "post_rotation_end", "rotation_tc",
+            data_all,
+            "post_rotation_end",
+            "rotation_tc",
         )
         data_all["choice_rotation"] = discretize_rotation(
             data_all["pre_choice_rotation"],
         )
-        out = find_crossings(
-            data_all["pos_x"]
+        data_all["last_choice_white"] = get_last_choices(data_all["chose_white"])
+        data_all["last_correct_choice_white"] = get_last_choices(
+            data_all["chose_white"],
+            mask=data_all["correct_trial"] == 1,
         )
+        data_all["last_completed_choice_white"] = get_last_choices(
+            data_all["chose_white"],
+            mask=data_all["completed_trial"] == 1,
+        )                                    
+        
+        out = find_crossings(data_all["pos_x"])
         data_all["border_crossing_x"], data_all["border_crossing_x_dir"] = out
-        out = find_crossings(
-            data_all["pos_y"]
-        )
+        
+        out = find_crossings(data_all["pos_y"])
         data_all["border_crossing_y"], data_all["border_crossing_y_dir"] = out
-        data_all["relevant_crossing_x"] = get_relevant_crossing(
-            data_all["border_crossing_x"], data_all["approach_start"],
+        
+        out = get_relevant_crossing(
+            data_all["border_crossing_x"],
+            data_all["border_crossing_x_dir"],
+            data_all["approach_start"],
         )
-        data_all["relevant_crossing_y"] = get_relevant_crossing(
-            data_all["border_crossing_y"], data_all["approach_start"],
+        data_all["relevant_crossing_x"], data_all["relevant_crossing_x_dir"] = out
+
+        out = get_relevant_crossing(
+            data_all["border_crossing_y"],
+            data_all["border_crossing_y_dir"],
+            data_all["approach_start"],
         )
+        data_all["relevant_crossing_y"], data_all["relevant_crossing_y_dir"] = out
         datas.append(data_all)
 
         files_loaded += 1

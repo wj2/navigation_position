@@ -9,12 +9,18 @@ def equal_0(x):
     return x == 0
 
 
+def _less_than_y(x, y):
+    return x < y
+
 def less_than_180(x):
-    return x < 180
+    return _less_than_y(x, 180)
+
+def less_than_2(x):
+    return _less_than_y(x, 2)
 
 
 default_funcs = {
-    "choice orientation": less_than_180,
+    "choice orientation": less_than_2,
     "rewarded": equal_0,
 }
 
@@ -36,10 +42,12 @@ default_dec_variables = {
     "east-west position": "IsEast",
     "north-south position": "IsNorth",
     "white side": "white_right",
+    "pink side": "pink_right",
     "correct side": "target_right",
     "choice side": "chose_right",
-    "choice color": "chose_white",
-    "choice orientation": "pre_choice_rotation",
+    "choice color white": "chose_white",
+    "choice color pink": "chose_pink",
+    "choice orientation": "choice_rotation",
     "rewarded": "TrialError",
 }
 
