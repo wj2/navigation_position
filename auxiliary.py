@@ -66,8 +66,14 @@ timing_rename_dict = {
     "BehavioralCodes.TrialEpochTimes.PreChoiceDelay.1": "pre_choice_end",
     "BehavioralCodes.TrialEpochTimes.Choice.0": "choice_start",
     "BehavioralCodes.TrialEpochTimes.Choice.1": "choice_end",
-    "BehavioralCodes.TrialEpochTimes.ObjectApproach.0": "approach_start",
-    "BehavioralCodes.TrialEpochTimes.ObjectApproach.1": "approach_end",
+    (
+        "BehavioralCodes.TrialEpochTimes.ObjectApproach.0",
+        "BehavioralCodes.TrialEpochTimes.Response.0"
+    ): "approach_start",
+    (
+        "BehavioralCodes.TrialEpochTimes.ObjectApproach.1",
+        "BehavioralCodes.TrialEpochTimes.Response.1"
+    ): "approach_end",
 }
 info_rename_dict = {
     "Float0_IsEast": "IsEast",
@@ -138,6 +144,12 @@ def rename_fields(df, *dicts):
     full_dict = {}
     list(full_dict.update(d) for d in dicts)
     for old_name, new_name in full_dict.items():
+        if u.check_list(old_name):
+            present = list(on in df.columns for on in old_name)
+            inds = np.where(present)[0]
+            if len(inds) == 0:
+                raise IOError("column {} is missing".format(old_name))
+            old_name = old_name[inds[0]]
         if old_name in df.columns:
             rename = df[old_name]
         else:
@@ -257,7 +269,6 @@ def load_gulli_hashim_data_folder(
         data_all["correct_trial"] = data_all["TrialError"] == 0
         data_all = rename_fields(data_all, *rename_dicts)
 
-        print(fl_info["date"])
         task_key = date_task_dict.get(fl_info["date"])
         data_all["white_right"] = np.logical_or(
             np.logical_and(
