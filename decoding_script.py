@@ -63,6 +63,7 @@ if __name__ == "__main__":
         cond_s = cond_s + "_" + "-".join(args.balance_fields)
 
     decoder_kwargs = decoder_dict.get(args.decoder, {})
+    cond_s = cond_s + "_{}".format(args.decoder)
     out_all = npra.decode_times(
         data_use,
         regions=args.regions,
