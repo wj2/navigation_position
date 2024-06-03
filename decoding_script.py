@@ -20,7 +20,9 @@ def create_parser():
         type=str,
         help="folder to save the output in",
     )
-    parser.add_argument("--output_template", default="dec_{region}-{date}_{jobid}")
+    parser.add_argument(
+        "--output_template", default="dec_{region}{conds}-{date}_{jobid}"
+    )
     parser.add_argument("--jobid", default="0000")
     parser.add_argument("--use_inds", default=None, nargs="+", type=int)
     parser.add_argument("--correct_only", default=False, action="store_true")
@@ -50,10 +52,15 @@ if __name__ == "__main__":
         load_only_nth_files=args.use_inds,
     )
     data_use = npa.mask_completed_trials(data, correct_only=args.correct_only)
+    cond_s = ""
+    if args.correct_only:
+        cond_s = cond_s + "_correct"
     if not args.include_instructed:
         data_use = npa.mask_uninstructed_trials(data_use)
+        cond_s = cond_s + "_instructed"
     if args.balance_fields is not None:
-        args.balance_fields = list(args.balance_fields)        
+        args.balance_fields = list(args.balance_fields)
+        cond_s = cond_s + "_" + "-".join(args.balance_fields)
 
     decoder_kwargs = decoder_dict.get(args.decoder, {})
     out_all = npra.decode_times(
@@ -71,6 +78,7 @@ if __name__ == "__main__":
     out_fn = args.output_template.format(
         region="-".join(args.regions),
         date="-".join(dates),
+        conds=cond_s,
         jobid=args.jobid,
     )
 

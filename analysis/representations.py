@@ -1,4 +1,9 @@
+import numpy as np
 import sklearn.neighbors as sknn
+import imblearn.under_sampling as imb_us
+
+import rsatoolbox as rsa
+import general.neural_analysis as na
 
 
 def equals_one(x):
@@ -12,8 +17,10 @@ def equal_0(x):
 def _less_than_y(x, y):
     return x < y
 
+
 def less_than_180(x):
     return _less_than_y(x, 180)
+
 
 def less_than_2(x):
     return _less_than_y(x, 2)
@@ -39,6 +46,7 @@ reduced_time_dict = {
 
 
 default_dec_variables = {
+    "relevant position": "relevant_position",
     "east-west position": "IsEast",
     "north-south position": "IsNorth",
     "white side": "white_right",
@@ -74,6 +82,99 @@ def make_variable_masks(
             m2 = m2.rs_and(and_mask)
         masks[k] = (m1, m2)
     return masks
+
+
+default_intersection_variables = (
+    "relevant position",
+    "white side",
+    "choice side",
+)
+
+
+def make_mask_intersection(
+    data,
+    intersection_variables=default_intersection_variables,
+    dec_variables=default_dec_variables,
+    and_mask=None,
+):
+    new_dict = {k: dec_variables[k] for k in intersection_variables}
+    if and_mask is not None:
+        data = data.mask(and_mask)
+    masks = make_variable_masks(data, dec_variables=new_dict)
+    first_mask = list(ms[0] for ms in masks.values())
+    intersection_inds = []
+    comb_masks = []
+    for i in range(len(first_mask[0])):
+        comb_mask = np.stack(list(fm[i] for fm in first_mask), axis=1)
+        combs, inds = np.unique(comb_mask, axis=0, return_inverse=True)
+        comb_masks.append(combs)
+        intersection_inds.append(inds)
+    return data, comb_masks, intersection_inds
+
+
+def condition_distances(
+    data,
+    tbeg,
+    tend,
+    tzf,
+    intersection_variables=default_intersection_variables,
+    and_mask=None,
+    resamples=100,
+    x_targ=-250,
+    **kwargs,
+):
+    data, combs, inds = make_mask_intersection(
+        data, intersection_variables=intersection_variables, and_mask=and_mask
+    )
+    pops, xs = data.get_populations(tend - tbeg, tbeg, tend, time_zero_field=tzf)
+    t_ind = np.argmin(np.abs(xs - x_targ))
+    rdm_list = []
+    for i, pop in enumerate(pops):
+        ui = np.unique(inds[i])
+        inds_i = inds[i]
+        pipe = na.make_model_pipeline(**kwargs)
+        pop = pipe.fit_transform(pop[..., t_ind])
+
+        rdm_arr = np.zeros((resamples, len(ui), len(ui)))
+        sampler = imb_us.RandomUnderSampler()
+        for j in range(resamples):
+            pop_j, inds_ij = sampler.fit_resample(pop, inds_i)
+
+            data = rsa.data.Dataset(pop_j, obs_descriptors={"stimulus": inds_ij})
+
+            rdm = rsa.rdm.calc_rdm(
+                data, descriptor="stimulus", noise=None, method="crossnobis"
+            )
+
+            rdm_arr[j] = rdm.get_matrices()[0]
+        rdm_list.append(rdm_arr)
+    return rdm_list, combs
+
+def condition_averages(
+    data,
+    tbeg,
+    tend,
+    tzf,
+    intersection_variables=default_intersection_variables,
+    and_mask=None,
+    **kwargs,
+):
+    data, combs, inds = make_mask_intersection(
+        data, intersection_variables=intersection_variables, and_mask=and_mask
+    )
+    pops, xs = data.get_populations(tend - tbeg, tbeg, tend, time_zero_field=tzf)
+    avgs = []
+    for i, pop in enumerate(pops):
+        ui = np.unique(inds[i])
+        inds_i = inds[i]
+        pipe = na.make_model_pipeline(**kwargs, tc=True)
+        pop = pipe.fit_transform(pop)
+        avg_resp = np.zeros((len(ui),) + pop.shape[1:])
+        for j, ui_j in enumerate(ui):
+            mask = inds_i == ui_j
+            avg_resp[j] = np.mean(pop[mask], axis=0)
+        avgs.append(avg_resp)
+    return avgs, combs, xs
 
 
 default_contrast_variables = {

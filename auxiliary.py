@@ -270,6 +270,7 @@ def load_gulli_hashim_data_folder(
         data_all = rename_fields(data_all, *rename_dicts)
 
         task_key = date_task_dict.get(fl_info["date"])
+        data_all["relevant_position"] = data_all[task_key]
         data_all["white_right"] = np.logical_or(
             np.logical_and(
                 data_all[task_key] == 1,

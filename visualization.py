@@ -1,7 +1,43 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import sklearn.manifold as skm
+import itertools as it
 
 import general.plotting as gpl
+
+
+def plot_distance_distribs(conds, rdm, axs=None, fwid=3, colors=None, **kwargs):
+    if axs is None:
+        f, axs = plt.subplots(
+            1, conds.shape[1], figsize=(fwid * conds.shape[1], fwid), sharey="all"
+        )
+    conds = conds.astype(float)
+    if colors is None:
+        colors = (None,) * conds.shape[1]
+    comb_lists = list([] for i in range(conds.shape[1]))
+    for j, k in it.combinations(range(len(conds)), 2):
+        sum_jk = (conds[j] - conds[k]) ** 2
+        if sum(sum_jk) == 1:
+            ind = np.argmax(sum_jk)
+            color_jk = colors[ind]
+            distrib = rdm[:, j, k]
+            axs[ind].hist(distrib, color=color_jk, **kwargs)
+            comb_lists[ind].append(distrib)
+            
+    for i, ax in enumerate(axs):
+        mus = np.array(list(np.mean(distrib) for distrib in comb_lists[i]))
+        gpl.plot_trace_werr(np.expand_dims(mus, 1), [-10], ax=axs[i])
+        gpl.clean_plot(ax, i)
+        gpl.add_vlines(0, ax)
+        
+
+
+def visualize_rdms(combs, rdm, **kwargs):
+    rdm_avg = np.mean(rdm, axis=0)
+    rdm_avg[rdm_avg < 0] = 0
+    trs = skm.MDS(n_components=3, dissimilarity="precomputed")
+    embedding_avg = trs.fit_transform(rdm_avg)
+    gpl.plot_highdim_structure(combs, embedding_avg, **kwargs)
 
 
 def plot_all_place_fields(
