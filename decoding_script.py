@@ -57,6 +57,7 @@ if __name__ == "__main__":
         cond_s = cond_s + "_correct"
     if not args.include_instructed:
         data_use = npa.mask_uninstructed_trials(data_use)
+    else:
         cond_s = cond_s + "_instructed"
     if args.balance_fields is not None:
         args.balance_fields = list(args.balance_fields)
