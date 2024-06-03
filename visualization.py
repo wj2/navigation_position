@@ -271,11 +271,12 @@ def visualize_decoding_dict(dec_dict, color_dict=None, axs=None, fwid=2, **kwarg
         for j, (var_k, dec_group) in enumerate(var_decs.items()):
             dec, xs = dec_group[:2]
             for k, dec_k in enumerate(dec):
+                col_ijk = default_colors[j % len(default_colors)].get("color")
                 l_ = gpl.plot_trace_werr(
                     xs,
                     dec_k,
                     ax=axs[j, i],
-                    color=color_dict.get(var_k, default_colors[j].get("color")),
+                    color=color_dict.get(var_k, col_ijk),
                     confstd=True,
                     **kwargs,
                 )
