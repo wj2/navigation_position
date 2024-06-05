@@ -21,7 +21,8 @@ def create_parser():
         help="folder to save the output in",
     )
     parser.add_argument(
-        "--output_template", default="dec_{region}{conds}-{date}_{jobid}"
+        "--output_template",
+        default="dec_{region}{conds}-w{winsize}-s{stepsize}_{date}_{jobid}",
     )
     parser.add_argument("--winsize", default=500, type=int)
     parser.add_argument("--stepsize", default=50, type=int)
@@ -86,6 +87,8 @@ if __name__ == "__main__":
         date="-".join(dates),
         conds=cond_s,
         jobid=args.jobid,
+        winsize=args.winsize,
+        stepsize=args.stepsize,
     )
 
     out_fig_path = os.path.join(args.output_folder, out_fn + ".pdf")
