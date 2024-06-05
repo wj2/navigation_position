@@ -23,6 +23,8 @@ def create_parser():
     parser.add_argument(
         "--output_template", default="dec_{region}{conds}-{date}_{jobid}"
     )
+    parser.add_argument("--winsize", default=500, type=int)
+    parser.add_argument("--stepsize", default=50, type=int)
     parser.add_argument("--jobid", default="0000")
     parser.add_argument("--use_inds", default=None, nargs="+", type=int)
     parser.add_argument("--correct_only", default=False, action="store_true")
@@ -69,6 +71,8 @@ if __name__ == "__main__":
         data_use,
         regions=args.regions,
         balance_fields=args.balance_fields,
+        winsize=args.winsize,
+        stepsize=args.stepsize,
         **decoder_kwargs,
     )
     f, _ = npv.visualize_decoding_dict(out_all)
