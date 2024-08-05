@@ -2,6 +2,7 @@ import os
 import scipy.ndimage as snd
 import numpy as np
 import pandas as pd
+import skimage as skimg
 
 import general.utility as u
 import general.data_io as gio
@@ -12,10 +13,13 @@ FIGFOLDER = "navigation_position/figs/"
 session_template = "(?P<animal>[a-zA-Z]+)_(?P<date>[0-9]+)"
 
 
-def load_sessions(folder=BASEFOLDER, correct_only=False, uninstructed_only=True):
+def load_sessions(
+    folder=BASEFOLDER, correct_only=False, uninstructed_only=True, **kwargs
+):
     data = gio.Dataset.from_readfunc(
         load_gulli_hashim_data_folder,
         folder,
+        **kwargs,
     )
     data_use = mask_completed_trials(data, correct_only=correct_only)
     if uninstructed_only:
@@ -68,11 +72,11 @@ timing_rename_dict = {
     "BehavioralCodes.TrialEpochTimes.Choice.1": "choice_end",
     (
         "BehavioralCodes.TrialEpochTimes.ObjectApproach.0",
-        "BehavioralCodes.TrialEpochTimes.Response.0"
+        "BehavioralCodes.TrialEpochTimes.Response.0",
     ): "approach_start",
     (
         "BehavioralCodes.TrialEpochTimes.ObjectApproach.1",
-        "BehavioralCodes.TrialEpochTimes.Response.1"
+        "BehavioralCodes.TrialEpochTimes.Response.1",
     ): "approach_end",
 }
 info_rename_dict = {
@@ -89,6 +93,10 @@ info_rename_dict = {
     "UserVars.RestructuredVRData.Position_X": "pos_x",
     "UserVars.RestructuredVRData.Position_Y": "pos_z",
     "UserVars.RestructuredVRData.Position_Z": "pos_y",
+    "UserVars.VR_Trial.Target_Positions.x": "targ_x",
+    "UserVars.VR_Trial.Target_Positions.z": "targ_y",
+    "UserVars.VR_Trial.Distractor_Positions.x": "dist_x",
+    "UserVars.VR_Trial.Distractor_Positions.z": "dist_y",
     "RestructuredAnalog.Eye.0": "eye_x",
     "RestructuredAnalog.Eye.1": "eye_y",
     "UserVars.VR_Trial.Fix_Position_World.x": "eye_world_x",
@@ -213,14 +221,107 @@ def get_last_choices(choices, mask=None, n_back=1):
         # with ith decision
         ind0 = inds[i]
         ind_last = inds[n_back + i - 1]
-        last_choice[ind_last + 1:ind1 + 1] = choices[ind0]
+        last_choice[ind_last + 1 : ind1 + 1] = choices[ind0]
     return last_choice
 
 
+def _round_fields(df, fields, round_to=5, periodic=False, radians=False):
+    for field in fields:
+        val = df[field]
+        quant = np.round(val / round_to, decimals=0) * round_to
+        if periodic:
+            quant = u.normalize_periodic_range(quant, radians=radians)
+        df[field + "_rounded"] = quant
+
+    return df
+
+
+def _add_unique_conditions(df, new_field, cond_fields):
+    _, conds = np.unique(df[list(cond_fields)].to_numpy(), axis=0, return_inverse=True)
+    df[new_field] = conds
+    return df
+
+
+default_cond_fields = ("xPosition_rounded", "yPosition_rounded", "rotation_rounded")
+
+
+def load_views_session(
+    folder,
+    spec_file_template="(?P<date>[0-9]+)_(?P<monkey>[a-zA-Z]+)_.*_ALL_.*\\.txt",
+    img_template=".*_(?P<num>[0-9]+)\\.png",
+    position_fields=("xPosition", "yPosition"),
+    rotation_fields=("rotation",),
+    condition_field="condition_number",
+    position_round=5,
+    rotation_round=22.5,
+    cond_fields=default_cond_fields,
+    remove_transparency=True,
+):
+    _, session_info, info = u.get_first_matching_file(
+        folder, spec_file_template, load_func=pd.read_csv
+    )
+    gen = u.load_folder_regex_generator(folder, img_template, load_func=skimg.io.imread)
+    img_list = []
+    trl_nums = []
+    for fp, img_info, img in gen:
+        img_num = int(img_info["num"])
+        trl_nums.append(img_num)
+        img_list.append(img)
+    img_list = np.stack(img_list, axis=0)
+    trl_nums = np.array(trl_nums)
+    inds = np.argsort(trl_nums)
+    imgs = img_list[inds]
+    trl_nums = trl_nums[inds]
+    info["trl_num"] = trl_nums
+    if remove_transparency:
+        imgs = imgs[..., :-1]
+    info = _round_fields(info, position_fields, round_to=position_round)
+    info = _round_fields(info, rotation_fields, round_to=rotation_round, periodic=True)
+
+    info = _add_unique_conditions(info, condition_field, cond_fields)
+    return imgs, info
+
+
+default_column_names = ("xPosition", "yPosition", "x_move", "y_move", "E-W", "rotation")
+
+
+def load_views(
+    folder,
+    spec_file="view_coordinates.txt",
+    img_template="(?P<num>[0-9]+).JPG",
+    column_names=default_column_names,
+    test_inds=np.arange(32, 80),
+    position_fields=("xPosition", "yPosition"),
+    condition_field="condition_number",
+    test_column="isTestCondition",
+    cond_fields=default_cond_fields,
+):
+    info = pd.read_csv(os.path.join(folder, spec_file), sep="\t", header=None)
+    gen = u.load_folder_regex_generator(folder, img_template, load_func=skimg.io.imread)
+    img_list = []
+    info_list = []
+    for fp, img_info, img in gen:
+        img_num = int(img_info["num"])
+        info_list.append(info.iloc[img_num])
+        img_list.append(img)
+    img_list = np.stack(img_list, axis=0)
+    info_list = np.stack(info_list, axis=0)
+    info_list[:, 0] = info_list[:, 0] + info_list[:, 2]
+    info_list[:, 1] = info_list[:, 1] + info_list[:, 3]
+    angle = np.expand_dims(np.arctan2(*u.make_unit_vector(info_list[:, 2:4]).T), 1)
+    info_list = np.concatenate((info_list, angle), axis=1)
+    info_dict = {k: info_list[:, i] for i, k in enumerate(column_names)}
+    info_df = pd.DataFrame.from_dict(info_dict)
+    info_df[test_column] = np.isin(np.arange(len(info_df)), test_inds)
+    info_df = _round_fields(info_df, position_fields)
+    info_df = _add_unique_conditions(info_df, condition_field, cond_fields)
+    return img_list, info_df
+
+
 date_task_dict = {
-    "20231223": "IsEast",
-    "20240112": "IsNorth",
-    "20240115": "IsNorth",
+    "20231223": ("IsEast", "IsNorth"),
+    "20240112": ("IsNorth", "IsEast"),
+    "20240115": ("IsNorth", "IsEast"),
 }
 
 
@@ -268,26 +369,40 @@ def load_gulli_hashim_data_folder(
         data_all["completed_trial"] = np.isin(data_all["TrialError"], (0, 6))
         data_all["correct_trial"] = data_all["TrialError"] == 0
         data_all = rename_fields(data_all, *rename_dicts)
-
         task_key = date_task_dict.get(fl_info["date"])
-        data_all["relevant_position"] = data_all[task_key]
+        if task_key is None:
+            ns_mask = data_all["Float9_RuleEW0NS1"] == 1
+            ew_mask = data_all["Float9_RuleEW0NS1"] == 0
+            is_east = data_all["IsEast"]
+            is_north = data_all["IsNorth"]
+            rel_pos = np.zeros(len(is_east))
+            rel_pos[ns_mask] = is_north[ns_mask]
+            rel_pos[ew_mask] = is_east[ew_mask]
+            irrel_pos = np.zeros(len(is_east))
+            irrel_pos[ns_mask] = is_east[ns_mask]
+            irrel_pos[ew_mask] = is_north[ew_mask]
+            data_all["relevant_position"] = rel_pos
+            data_all["irrelevant_position"] = irrel_pos
+        else:
+            data_all["relevant_position"] = data_all[task_key[0]]
+            data_all["irrelevant_position"] = data_all[task_key[1]]
         data_all["white_right"] = np.logical_or(
             np.logical_and(
-                data_all[task_key] == 1,
+                data_all["relevant_position"] == 1,
                 data_all["target_right"] == 1,
             ),
             np.logical_and(
-                data_all[task_key] == 0,
+                data_all["relevant_position"] == 0,
                 data_all["target_right"] == 0,
             ),
         )
         data_all["pink_right"] = np.logical_or(
             np.logical_and(
-                data_all[task_key] == 1,
+                data_all["relevant_position"] == 1,
                 data_all["target_right"] == 1,
             ),
             np.logical_and(
-                data_all[task_key] == 0,
+                data_all["relevant_position"] == 0,
                 data_all["target_right"] == 0,
             ),
         )
@@ -307,14 +422,14 @@ def load_gulli_hashim_data_folder(
         data_all["last_completed_choice_white"] = get_last_choices(
             data_all["chose_white"],
             mask=data_all["completed_trial"] == 1,
-        )                                    
-        
+        )
+
         out = find_crossings(data_all["pos_x"])
         data_all["border_crossing_x"], data_all["border_crossing_x_dir"] = out
-        
+
         out = find_crossings(data_all["pos_y"])
         data_all["border_crossing_y"], data_all["border_crossing_y_dir"] = out
-        
+
         out = get_relevant_crossing(
             data_all["border_crossing_x"],
             data_all["border_crossing_x_dir"],

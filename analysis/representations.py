@@ -4,6 +4,7 @@ import imblearn.under_sampling as imb_us
 
 import rsatoolbox as rsa
 import general.neural_analysis as na
+import general.data_io as gio
 
 
 def equals_one(x):
@@ -58,6 +59,36 @@ default_dec_variables = {
     "choice orientation": "choice_rotation",
     "rewarded": "TrialError",
 }
+
+
+def border_crossing_masks(
+    data,
+    crossing_fields=("relevant_crossing_x", "relevant_crossing_y"),
+    time_range=("nav_start", "nav_end"),
+):
+    cross_trials_sep = list(data[cf].rs_isnan().rs_not() for cf in crossing_fields)
+    cross_trials_sep_times = list(data[cf] for cf in crossing_fields)
+    cross_trials = cross_trials_sep[0]
+    cross_times = list(np.zeros(len(cf)) for cf in cross_trials_sep[0])
+    non_cross_trials = cross_trials.rs_not()
+    non_cross_times = list(np.zeros(len(cf)) for cf in cross_trials_sep[0])
+    time_sample = data[list(time_range)]
+    rng = np.random.default_rng()
+    for i, ct in enumerate(cross_times):
+        ct[:] = np.nan
+        non_cross_times[i][:] = np.nan
+    for i, cts in enumerate(cross_trials_sep):
+        cross_trials = cross_trials.rs_or(cts)
+        non_cross_trials = non_cross_trials.rs_and(cts.rs_not())
+        for j, cts_j in enumerate(cts):
+            mask = cts_j.to_numpy()
+            cross_times[j][mask] = cross_trials_sep_times[i][j][mask]
+            times_j = time_sample[j].to_numpy()
+            samp = rng.uniform(times_j[:, 0], times_j[:, 1])
+            non_cross_times[j][~mask] = samp[~mask]
+    cross_times = gio.ResultSequence(cross_times)
+    non_cross_times = gio.ResultSequence(non_cross_times)
+    return (cross_trials, cross_times), (non_cross_trials, non_cross_times)
 
 
 def make_variable_masks(
@@ -121,12 +152,15 @@ def condition_distances(
     and_mask=None,
     resamples=100,
     x_targ=-250,
+    regions=None,
     **kwargs,
 ):
     data, combs, inds = make_mask_intersection(
         data, intersection_variables=intersection_variables, and_mask=and_mask
     )
-    pops, xs = data.get_populations(tend - tbeg, tbeg, tend, time_zero_field=tzf)
+    pops, xs = data.get_populations(
+        tend - tbeg, tbeg, tend, time_zero_field=tzf, regions=regions,
+    )
     t_ind = np.argmin(np.abs(xs - x_targ))
     rdm_list = []
     for i, pop in enumerate(pops):
@@ -149,6 +183,7 @@ def condition_distances(
             rdm_arr[j] = rdm.get_matrices()[0]
         rdm_list.append(rdm_arr)
     return rdm_list, combs
+
 
 def condition_averages(
     data,
@@ -249,3 +284,20 @@ def decode_times(data, time_dict=None, dec_vars=None, **kwargs):
             out = decode_masks(data, *k_masks, *ts, time_k, **kwargs, ret_pops=True)
             out_dict[time_k][var_k] = out
     return out_dict
+
+
+default_region_dict = {
+    "dlPFC": ("DLPFCv", "DLPFCd"),
+    "HPC": ("HPC",),
+    "PMd": ("PMd",),
+    "all": None,
+}
+
+
+def decode_regions(func, *args, region_list=default_region_dict, **kwargs):
+    out_dict = {}
+    for r_name, r_list in region_list.items():
+        out_dict[r_name] = func(*args, regions=r_list, **kwargs)
+    return out_dict
+
+
