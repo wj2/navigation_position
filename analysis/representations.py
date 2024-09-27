@@ -237,6 +237,40 @@ def make_variable_generalization_masks(
     return masks_gen
 
 
+def decode_masks_reverse(
+    data,
+    mask1,
+    mask2,
+    *args,
+    gen_mask1=None,
+    gen_mask2=None,
+    **kwargs,
+):
+    out1 = decode_masks(
+        data, mask1, mask2, *args, gen_mask1=gen_mask1, gen_mask2=gen_mask2, **kwargs,
+    )
+    out2 = decode_masks(
+        data, gen_mask1, gen_mask2, *args, gen_mask1=mask1, gen_mask2=mask2, **kwargs,
+    )
+    dec = np.stack((out1[0], out2[0]), axis=1)
+    gen = np.stack((out1[-1], out2[-1]), axis=1)
+    xs = out1[1]
+    return dec, xs, gen
+
+
+def decode_masks_regions(
+        data, *args, use_regions=None, func=decode_masks, **kwargs,
+):
+    out_dict = {}
+    if use_regions is None:
+        regions = list(x.iloc[0] for x in data["neur_regions"])
+        u_rs = np.unique(regions)
+        use_regions = tuple((r,) for r in u_rs)
+    for ur in use_regions:
+        out_dict[ur] = func(data, *args, **kwargs, regions=ur,)
+    return out_dict
+
+
 def decode_masks(
     data,
     mask1,

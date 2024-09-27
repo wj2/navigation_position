@@ -30,7 +30,7 @@ def load_sessions(
 def load_session_files(
     folder,
     spikes="spike_times.pkl",
-    bhv="[0-9]+_[a-z]+_VR_behave\\.pkl",
+    bhv="[0-9]+_[a-z]+_(VR|airpuff)_behave\\.pkl",
     good_neurs="good_neurons.pkl",
 ):
     out_dict = {}
@@ -156,8 +156,9 @@ def rename_fields(df, *dicts):
             present = list(on in df.columns for on in old_name)
             inds = np.where(present)[0]
             if len(inds) == 0:
-                raise IOError("column {} is missing".format(old_name))
-            old_name = old_name[inds[0]]
+                print("column {} is missing".format(old_name))
+            else:
+                old_name = old_name[inds[0]]
         if old_name in df.columns:
             rename = df[old_name]
         else:
@@ -243,11 +244,15 @@ def _add_unique_conditions(df, new_field, cond_fields):
 
 
 default_cond_fields = ("xPosition_rounded", "yPosition_rounded", "rotation_rounded")
+training_spec_file = (
+    "(?P<date>[0-9]+)_(?P<monkey>[a-zA-Z]+)_.*_Training_CHOICE_.*\\.txt"
+)
+default_spec_file = "(?P<date>[0-9]+)_(?P<monkey>[a-zA-Z]+)_.*_ALL_.*\\.txt"
 
 
 def load_views_session(
     folder,
-    spec_file_template="(?P<date>[0-9]+)_(?P<monkey>[a-zA-Z]+)_.*_ALL_.*\\.txt",
+    spec_file_template=default_spec_file,
     img_template=".*_(?P<num>[0-9]+)\\.png",
     position_fields=("xPosition", "yPosition"),
     rotation_fields=("rotation",),
@@ -257,7 +262,7 @@ def load_views_session(
     cond_fields=default_cond_fields,
     remove_transparency=True,
 ):
-    _, session_info, info = u.get_first_matching_file(
+    _, _, info = u.get_first_matching_file(
         folder, spec_file_template, load_func=pd.read_csv
     )
     gen = u.load_folder_regex_generator(folder, img_template, load_func=skimg.io.imread)
