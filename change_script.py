@@ -84,7 +84,11 @@ if __name__ == "__main__":
         **decoder_kwargs,
     )
 
-    f, _ = npac.visualize_change_of_mind_dec(out, tzf=args.time_zero_field)
+    if args.projection:
+        chance = 0
+    else:
+        chance = .5
+    f, _ = npac.visualize_change_of_mind_dec(out, tzf=args.time_zero_field, chance=chance)
 
     dates = data_use["date"].to_numpy()
 

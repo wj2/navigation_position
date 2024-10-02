@@ -59,6 +59,7 @@ def visualize_change_of_mind_dec(
     fwid=3,
     axs=None,
     indiv_alpha=0.2,
+    chance=.5,
 ):
     n_vars = len(out_dict)
     n_regions = len(list(out_dict.values())[0])
@@ -113,7 +114,7 @@ def visualize_change_of_mind_dec(
                 gpl.clean_plot_bottom(axs[i, j])
             else:
                 axs[i, j].set_xlabel("time from {}".format(tzf))
-            gpl.add_hlines(0.5, axs[i, j])
+            gpl.add_hlines(chance, axs[i, j])
             gpl.add_vlines(0, axs[i, j])
     return f, axs
 
