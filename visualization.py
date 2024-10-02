@@ -31,6 +31,39 @@ def plot_distance_distribs(conds, rdm, axs=None, fwid=3, colors=None, **kwargs):
         gpl.add_vlines(0, ax)
         
 
+@gpl.ax_adder()
+def plot_session_change_of_mind(*cond_dicts, ax=None):
+    corr_traj = []
+    gen_traj = []
+    for i, cd in enumerate(cond_dicts):
+        targ = cd["targets"]
+        pc = np.swapaxes(cd["projection"], 1, 2)
+        u_labels = np.unique(targ)
+        out_lab = np.zeros((len(u_labels), pc.shape[-1]))
+        for i, ul in enumerate(u_labels):
+            for j in range(pc.shape[-1]):
+                mask = targ[..., j] == ul
+                out_lab[i, j] = np.mean(pc[mask])
+        corr_traj.append(out_lab)
+
+        pg = cd["projection_gen"]
+        targ_gen = cd["labels_gen"]
+        u_labels = np.unique(targ_gen)
+        gen_traj_i = []
+        for ul in u_labels:
+            mask = ul == targ_gen
+            gen_traj_i.append(np.mean(pg[:, mask], axis=(0, 1)))
+        gen_traj.append(np.stack(gen_traj_i, axis=0))
+    corr_traj = np.stack(corr_traj, axis=0)
+    gen_traj = np.stack(gen_traj, axis=0)
+    
+    gpl.plot_colored_line(*corr_traj[:, 0], ax=ax, cmap="Blues")
+    gpl.plot_colored_line(*corr_traj[:, 1], ax=ax, cmap="Greens")
+    gpl.plot_colored_line(*gen_traj[:, 0], ax=ax, cmap="Blues")
+    gpl.plot_colored_line(*gen_traj[:, 1], ax=ax, cmap="Greens")
+    gpl.add_hlines(0, ax)
+    gpl.add_vlines(0, ax)
+
 
 def visualize_rdms(combs, rdm, **kwargs):
     rdm_avg = np.mean(rdm, axis=0)

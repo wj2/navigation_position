@@ -4,6 +4,118 @@ import matplotlib.pyplot as plt
 import general.plotting as gpl
 import general.utility as u
 import general.data_io as gio
+import navigation_position.analysis.representations as npra
+
+
+default_dec_vars = ("choice side", "correct side", "rule", "white side")
+default_balance_vars = {
+    "rule": None,
+    "white side": None,
+    "choice side": ("target_right",),
+    "correct side": ("chose_right",),
+}
+
+
+def decode_change_of_mind_regions(
+    data,
+    *args,
+    dec_vars=default_dec_vars,
+    balance_vars=default_balance_vars,
+    eps=0.1,
+    dist_thr=6,
+    balance=False,
+    **kwargs,
+):
+    change_mask = distance_change_masks(data, dist_thr=dist_thr, eps=eps)
+    out_dict = {}
+    if not balance:
+        balance_vars = {}
+    for i, dv in enumerate(dec_vars):
+        m1_full = data[npra.default_dec_variables[dv]] == 1
+        m2_full = data[npra.default_dec_variables[dv]] == 0
+        m1_tr = m1_full.rs_and(change_mask.rs_not())
+        m2_tr = m2_full.rs_and(change_mask.rs_not())
+        m1_te = m1_full.rs_and(change_mask)
+        m2_te = m2_full.rs_and(change_mask)
+        bv_i = balance_vars.get(dv)
+        out_regions = npra.decode_regions(
+            npra.decode_masks,
+            data,
+            m1_tr,
+            m2_tr,
+            *args,
+            gen_mask1=m1_te,
+            gen_mask2=m2_te,
+            balance_fields=bv_i,
+            **kwargs,
+        )
+        out_dict[dv] = out_regions
+    return out_dict
+
+
+def visualize_change_of_mind_dec(
+    out_dict,
+    tzf="",
+    fwid=3,
+    axs=None,
+    indiv_alpha=0.2,
+):
+    n_vars = len(out_dict)
+    n_regions = len(list(out_dict.values())[0])
+    if axs is None:
+        f, axs = plt.subplots(
+            n_vars,
+            n_regions,
+            figsize=(fwid * n_regions, fwid * n_vars),
+            squeeze=False,
+        )
+    else:
+        f = None
+    for i, (dv, out_regions) in enumerate(out_dict.items()):
+        for j, (use_region, out_ij) in enumerate(out_regions.items()):
+            dec, xs, gen = out_ij
+            dec_l = gpl.plot_trace_werr(
+                xs,
+                np.nanmean(dec, axis=0),
+                ax=axs[i, j],
+                label="consistent",
+                confstd=True,
+            )
+            gen_l = gpl.plot_trace_werr(
+                xs,
+                np.nanmean(gen, axis=0),
+                ax=axs[i, j],
+                label="change of mind",
+                confstd=True,
+            )
+            for k in range(dec.shape[0]):
+                axs[i, j].plot(
+                    xs,
+                    np.mean(dec[k], axis=0),
+                    color=dec_l[0].get_color(),
+                    zorder=-1,
+                    alpha=indiv_alpha,
+                )
+                axs[i, j].plot(
+                    xs,
+                    np.mean(gen[k], axis=0),
+                    color=gen_l[0].get_color(),
+                    zorder=-1,
+                    alpha=indiv_alpha,
+                )
+
+            if j == 0:
+                axs[i, j].set_ylabel("decoding {}".format(dv))
+            gpl.clean_plot(axs[i, j], j)
+            if i == 0:
+                axs[i, j].set_title(use_region)
+            if i < n_vars - 1:
+                gpl.clean_plot_bottom(axs[i, j])
+            else:
+                axs[i, j].set_xlabel("time from {}".format(tzf))
+            gpl.add_hlines(0.5, axs[i, j])
+            gpl.add_vlines(0, axs[i, j])
+    return f, axs
 
 
 def change_of_mind_trials(

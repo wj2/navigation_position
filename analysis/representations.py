@@ -57,6 +57,7 @@ default_dec_variables = {
     "choice color white": "chose_white",
     "choice color pink": "chose_pink",
     "choice orientation": "choice_rotation",
+    "rule": "Float9_RuleEW0NS1",
     "rewarded": "TrialError",
 }
 
@@ -256,19 +257,6 @@ def decode_masks_reverse(
     gen = np.stack((out1[-1], out2[-1]), axis=1)
     xs = out1[1]
     return dec, xs, gen
-
-
-def decode_masks_regions(
-        data, *args, use_regions=None, func=decode_masks, **kwargs,
-):
-    out_dict = {}
-    if use_regions is None:
-        regions = list(x.iloc[0] for x in data["neur_regions"])
-        u_rs = np.unique(regions)
-        use_regions = tuple((r,) for r in u_rs)
-    for ur in use_regions:
-        out_dict[ur] = func(data, *args, **kwargs, regions=ur,)
-    return out_dict
 
 
 def decode_masks(
