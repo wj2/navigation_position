@@ -37,6 +37,7 @@ def create_parser():
     parser.add_argument("--decoder", default="linear")
     parser.add_argument("--balance", default=False, action="store_true")
     parser.add_argument("--projection", default=False, action="store_true")
+    parser.add_argument("--n_folds", default=100, type=int)
     return parser
 
 
@@ -59,7 +60,8 @@ if __name__ == "__main__":
         load_only_nth_files=args.use_inds,
     )
     data_use = npa.mask_completed_trials(data, correct_only=args.correct_only)
-    cond_s = ""
+    tzf_s = args.time_zero_field.replace("_", "-")
+    cond_s = tzf_s
     if args.correct_only:
         cond_s = cond_s + "_correct"
     if not args.include_instructed:
@@ -68,6 +70,8 @@ if __name__ == "__main__":
         cond_s = cond_s + "_instructed"
     if args.balance:
         cond_s = cond_s + "_balanced"
+    if args.projection:
+        cond_s = cond_s + "_projection"
 
     decoder_kwargs = decoder_dict.get(args.decoder, {})
     cond_s = cond_s + "_{}".format(args.decoder)
@@ -77,6 +81,7 @@ if __name__ == "__main__":
         data_use,
         *ts,
         args.time_zero_field,
+        n_folds=args.n_folds,
         eps=args.change_eps,
         winsize=args.winsize,
         stepsize=args.stepsize,
