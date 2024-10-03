@@ -29,7 +29,7 @@ def create_parser():
     parser.add_argument("--time_zero_field", default="choice_start")
     parser.add_argument("--winsize", default=500, type=int)
     parser.add_argument("--stepsize", default=50, type=int)
-    parser.add_argument("--change_eps", default=.1, type=float)    
+    parser.add_argument("--change_eps", default=0.1, type=float)
     parser.add_argument("--jobid", default="0000")
     parser.add_argument("--use_inds", default=None, nargs="+", type=int)
     parser.add_argument("--correct_only", default=False, action="store_true")
@@ -40,7 +40,7 @@ def create_parser():
     parser.add_argument("--n_folds", default=100, type=int)
     parser.add_argument("--causal_timing", default=False, action="store_true")
     parser.add_argument("--tbeg", default=None, type=float)
-    parser.add_argument("--tend", default=None, type=float)    
+    parser.add_argument("--tend", default=None, type=float)
     return parser
 
 
@@ -98,6 +98,8 @@ if __name__ == "__main__":
         winsize=args.winsize,
         stepsize=args.stepsize,
         ret_projections=args.projection,
+        return_projection=args.projection,
+        ret_full_dict=args.projection,
         causal_timing=args.causal_timing,
         **decoder_kwargs,
     )
@@ -105,8 +107,10 @@ if __name__ == "__main__":
     if args.projection:
         chance = 0
     else:
-        chance = .5
-    f, _ = npac.visualize_change_of_mind_dec(out, tzf=args.time_zero_field, chance=chance)
+        chance = 0.5
+    f, _ = npac.visualize_change_of_mind_dec(
+        out, tzf=args.time_zero_field, chance=chance,
+    )
 
     dates = data_use["date"].to_numpy()
 

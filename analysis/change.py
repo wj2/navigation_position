@@ -60,8 +60,10 @@ def visualize_change_of_mind_dec(
     fwid=3,
     axs=None,
     indiv_alpha=0.2,
-    chance=.5,
+    chance=0.5,
+    proj_cm="hsv",
 ):
+    proj_cm = plt.get_cmap(proj_cm)
     n_vars = len(out_dict)
     n_regions = len(list(out_dict.values())[0])
     if axs is None:
@@ -75,7 +77,11 @@ def visualize_change_of_mind_dec(
         f = None
     for i, (dv, out_regions) in enumerate(out_dict.items()):
         for j, (use_region, out_ij) in enumerate(out_regions.items()):
-            dec, xs, gen = out_ij
+            dec, xs, gen = out_ij[:3]
+            if len(out_ij) == 4:
+                dec_dicts = out_ij[-1]
+            else:
+                dec_dicts = None
             dec_l = gpl.plot_trace_werr(
                 xs,
                 np.nanmean(dec, axis=0),
@@ -105,6 +111,15 @@ def visualize_change_of_mind_dec(
                     zorder=-1,
                     alpha=indiv_alpha,
                 )
+                if dec_dicts is not None:
+                    proj = np.mean(dec_dicts[k]["projections_gen"], axis=0)
+                    labels = dec_dicts[k]["labels_gen"]
+                    flip_proj = proj * np.expand_dims(
+                        np.sign(labels - np.mean(labels)), 1
+                    )
+                    for z, fp in enumerate(flip_proj):
+                        color = proj_cm((z + 1) / (len(flip_proj) + 1))
+                        axs[i, j].plot(xs, flip_proj, color=color)
 
             if j == 0:
                 axs[i, j].set_ylabel("decoding {}".format(dv))
