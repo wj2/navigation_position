@@ -11,6 +11,7 @@ default_dec_vars = ("choice side", "correct side", "rule", "white side")
 default_balance_vars = {
     "rule": None,
     "white side": None,
+    "pink side": None,
     "choice side": ("target_right",),
     "correct side": ("chose_right",),
 }

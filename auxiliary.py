@@ -375,9 +375,9 @@ def load_gulli_hashim_data_folder(
         data_all["correct_trial"] = data_all["TrialError"] == 0
         data_all = rename_fields(data_all, *rename_dicts)
         task_key = date_task_dict.get(fl_info["date"])
+        ns_mask = data_all["Float9_RuleEW0NS1"] == 1
+        ew_mask = data_all["Float9_RuleEW0NS1"] == 0
         if task_key is None:
-            ns_mask = data_all["Float9_RuleEW0NS1"] == 1
-            ew_mask = data_all["Float9_RuleEW0NS1"] == 0
             is_east = data_all["IsEast"]
             is_north = data_all["IsNorth"]
             rel_pos = np.zeros(len(is_east))
@@ -411,6 +411,8 @@ def load_gulli_hashim_data_folder(
                 data_all["target_right"] == 0,
             ),
         )
+        data_all["pink_right"][ew_mask] = np.nan
+        data_all["white_right"][ns_mask] = np.nan
         data_all["pre_choice_rotation"] = extract_time_field(
             data_all,
             "post_rotation_end",
