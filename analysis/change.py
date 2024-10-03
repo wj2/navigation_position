@@ -7,7 +7,7 @@ import general.data_io as gio
 import navigation_position.analysis.representations as npra
 
 
-default_dec_vars = ("choice side", "correct side", "rule", "white side")
+default_dec_vars = ("choice side", "correct side", "rule", "white side", "pink side")
 default_balance_vars = {
     "rule": None,
     "white side": None,
