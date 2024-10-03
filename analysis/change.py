@@ -119,7 +119,7 @@ def visualize_change_of_mind_dec(
                     )
                     for z, fp in enumerate(flip_proj):
                         color = proj_cm((z + 1) / (len(flip_proj) + 1))
-                        axs[i, j].plot(xs, flip_proj, color=color)
+                        axs[i, j].plot(xs, fp, color=color)
 
             if j == 0:
                 axs[i, j].set_ylabel("decoding {}".format(dv))
