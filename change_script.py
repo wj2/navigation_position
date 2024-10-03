@@ -39,6 +39,8 @@ def create_parser():
     parser.add_argument("--projection", default=False, action="store_true")
     parser.add_argument("--n_folds", default=100, type=int)
     parser.add_argument("--causal_timing", default=False, action="store_true")
+    parser.add_argument("--tbeg", default=None, type=float)
+    parser.add_argument("--tend", default=None, type=float)    
     return parser
 
 
@@ -79,7 +81,14 @@ if __name__ == "__main__":
     decoder_kwargs = decoder_dict.get(args.decoder, {})
     cond_s = cond_s + "_{}".format(args.decoder)
 
-    ts = npra.reduced_time_dict[args.time_zero_field]
+    default_ts = npra.reduced_time_dict[args.time_zero_field]
+    given_ts = (args.tbeg, args.tend)
+    ts = []
+    for i, gt in enumerate(given_ts):
+        if gt is None:
+            ts.append(default_ts[i])
+        else:
+            ts.append(gt)
     out = npac.decode_change_of_mind_regions(
         data_use,
         *ts,
