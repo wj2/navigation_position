@@ -38,6 +38,7 @@ def create_parser():
     parser.add_argument("--balance", default=False, action="store_true")
     parser.add_argument("--projection", default=False, action="store_true")
     parser.add_argument("--n_folds", default=100, type=int)
+    parser.add_argument("--causal_timing", default=False, action="store_true")
     return parser
 
 
@@ -86,6 +87,7 @@ if __name__ == "__main__":
         winsize=args.winsize,
         stepsize=args.stepsize,
         ret_projections=args.projection,
+        causal_timing=args.causal_timing,
         **decoder_kwargs,
     )
 
