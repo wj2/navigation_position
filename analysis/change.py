@@ -112,7 +112,7 @@ def visualize_change_of_mind_dec(
                     alpha=indiv_alpha,
                 )
                 if dec_dicts is not None:
-                    proj = np.mean(dec_dicts[k]["projections_gen"], axis=0)
+                    proj = np.mean(dec_dicts[k]["projection_gen"], axis=0)
                     labels = dec_dicts[k]["labels_gen"]
                     flip_proj = proj * np.expand_dims(
                         np.sign(labels - np.mean(labels)), 1
