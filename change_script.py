@@ -73,6 +73,8 @@ if __name__ == "__main__":
         cond_s = cond_s + "_balanced"
     if args.projection:
         cond_s = cond_s + "_projection"
+    if args.causal_timing:
+        cond_s = cond_s + "_causal"
 
     decoder_kwargs = decoder_dict.get(args.decoder, {})
     cond_s = cond_s + "_{}".format(args.decoder)
