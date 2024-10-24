@@ -25,6 +25,7 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
+  "numpy~=1.26.4",
   "pandas~=2.2.2",
   "matplotlib~=3.9.2",
   "scikit-learn~=1.5.1",
@@ -38,6 +39,9 @@ dependencies = [
 general = [
   "general[tensorflow] @ git+https://github.com/wj2/general-neural.git",
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [project.urls]
 Documentation = "https://github.com/wj2/navigation-position#readme"
