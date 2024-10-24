@@ -29,11 +29,14 @@ dependencies = [
   "matplotlib~=3.9.2",
   "scikit-learn~=1.5.1",
   "scikit-video~=1.1.11",
+  "imbalanced-learn~=0.12.3",
+  "rsatoolbox~=0.1.5",
+  "scikit-image~=0.22.0",
 ]
 
 [project.optional-dependencies]
 general = [
-  "general @ git+https://github.com/wj2/general-neural.git",
+  "general[tensorflow] @ git+https://github.com/wj2/general-neural.git",
 ]
 
 [project.urls]
