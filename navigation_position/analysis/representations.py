@@ -27,14 +27,38 @@ def less_than_2(x):
     return _less_than_y(x, 2)
 
 
+def _boundary_vis_wrap(fields):
+    ns = gio.ResultSequence(x["IsNorth"] for x in fields)
+    ew = gio.ResultSequence(x["IsEast"] for x in fields)
+    rot = gio.ResultSequence(x["choice_rotation"] for x in fields)
+    out = _boundary_vis(ns, ew, rot)
+    return out[0]
+
+
+def _boundary_vis(ns, ew, rot):
+    sw = (ns == 0).rs_and(ew == 0)
+    nw = (ns == 1).rs_and(ew == 0)
+    se = (ns == 0).rs_and(ew == 1)
+    ne = (ns == 1).rs_and(ew == 1)
+    sw_bound = sw.rs_and(rot.one_of((0, 1)))
+    nw_bound = nw.rs_and(rot.one_of((1, 2)))
+    se_bound = se.rs_and(rot.one_of((0, 3)))
+    ne_bound = ne.rs_and(rot.one_of((2, 3)))
+    bound = (sw_bound + nw_bound + se_bound + ne_bound) > 0
+    no_bound = bound.rs_not()
+    return bound, no_bound
+
+
 default_funcs = {
     "choice orientation": less_than_2,
     "rewarded": equal_0,
+    "boundary visible": _boundary_vis_wrap,
 }
 
 
 reduced_time_dict = {
     "pre_rotation_end": (-1000, 0),
+    "nav_start": (-500, 1000),
     "nav_end": (-1000, 0),
     "relevant_crossing_x": (-500, 500),
     "relevant_crossing_y": (-500, 500),
@@ -57,6 +81,7 @@ default_dec_variables = {
     "choice color white": "chose_white",
     "choice color pink": "chose_pink",
     "choice orientation": "choice_rotation",
+    "boundary visible": ["IsNorth", "IsEast", "choice_rotation"],
     "rule": "Float9_RuleEW0NS1",
     "rewarded": "TrialError",
 }
@@ -160,7 +185,11 @@ def condition_distances(
         data, intersection_variables=intersection_variables, and_mask=and_mask
     )
     pops, xs = data.get_populations(
-        tend - tbeg, tbeg, tend, time_zero_field=tzf, regions=regions,
+        tend - tbeg,
+        tbeg,
+        tend,
+        time_zero_field=tzf,
+        regions=regions,
     )
     t_ind = np.argmin(np.abs(xs - x_targ))
     rdm_list = []
@@ -248,10 +277,22 @@ def decode_masks_reverse(
     **kwargs,
 ):
     out1 = decode_masks(
-        data, mask1, mask2, *args, gen_mask1=gen_mask1, gen_mask2=gen_mask2, **kwargs,
+        data,
+        mask1,
+        mask2,
+        *args,
+        gen_mask1=gen_mask1,
+        gen_mask2=gen_mask2,
+        **kwargs,
     )
     out2 = decode_masks(
-        data, gen_mask1, gen_mask2, *args, gen_mask1=mask1, gen_mask2=mask2, **kwargs,
+        data,
+        gen_mask1,
+        gen_mask2,
+        *args,
+        gen_mask1=mask1,
+        gen_mask2=mask2,
+        **kwargs,
     )
     dec = np.stack((out1[0], out2[0]), axis=1)
     gen = np.stack((out1[-1], out2[-1]), axis=1)
@@ -299,7 +340,7 @@ def decode_times(data, time_dict=None, dec_vars=None, **kwargs):
         dec_vars = default_dec_variables
     out_dict = {}
 
-    masks = make_variable_masks(data)
+    masks = make_variable_masks(data, dec_variables=dec_vars)
     for time_k, ts in time_dict.items():
         out_dict[time_k] = {}
         for var_k, k_masks in masks.items():
@@ -321,5 +362,3 @@ def decode_regions(func, *args, region_list=default_region_dict, **kwargs):
     for r_name, r_list in region_list.items():
         out_dict[r_name] = func(*args, regions=r_list, **kwargs)
     return out_dict
-
-
