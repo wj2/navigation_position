@@ -12,11 +12,7 @@ def equals_one_zero(x):
 
 
 def _equals(x, t1, t2):
-    return x == t1, x == 2
-
-
-def equal_0(x):
-    return x == 0
+    return x == t1, x == t2
 
 
 def _less_than_greater_than_y(x, y):
@@ -185,6 +181,8 @@ def make_variable_masks(
     for k, v in dec_variables.items():
         func = func_dict.get(k, equals_one_zero)
         m1, m2 = func(data[v])
+        print(m1, m2, func)
+        print(list(np.mean(x) for x in m1), list(np.mean(x) for x in m2))
         if and_mask is not None:
             m1 = m1.rs_and(and_mask)
             m2 = m2.rs_and(and_mask)
@@ -396,7 +394,14 @@ def decode_times(data, time_dict=None, dec_vars=None, **kwargs):
     for time_k, ts in time_dict.items():
         out_dict[time_k] = {}
         for var_k, k_masks in masks.items():
+            print(var_k)
+            # print(k_masks)
+            # print(
+            #     list(np.mean(x) for x in k_masks[0]),
+            #     list(np.mean(x) for x in k_masks[1]),
+            # )
             out = decode_masks(data, *k_masks, *ts, time_k, **kwargs, ret_pops=True)
+            print(out[0].shape)
             out_dict[time_k][var_k] = out
     return out_dict
 
