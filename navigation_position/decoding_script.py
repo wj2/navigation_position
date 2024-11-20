@@ -43,7 +43,7 @@ decoder_dict = {
 }
 
 
-if __name__ == "__main__":
+def main():
     parser = create_parser()
     args = parser.parse_args()
 

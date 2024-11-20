@@ -40,6 +40,10 @@ general = [
   "general[tensorflow] @ git+https://github.com/wj2/general-neural.git",
 ]
 
+[project.scripts]
+np_decoding = "navigation_position.decoding_script:main"
+np_change = "navigation_position.change_script:main"
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
