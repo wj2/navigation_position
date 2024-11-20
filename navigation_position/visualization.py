@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import sklearn.manifold as skm
+import sklearn.decomposition as skd
 import itertools as it
 
 import general.plotting as gpl
@@ -23,13 +24,13 @@ def plot_distance_distribs(conds, rdm, axs=None, fwid=3, colors=None, **kwargs):
             distrib = rdm[:, j, k]
             axs[ind].hist(distrib, color=color_jk, **kwargs)
             comb_lists[ind].append(distrib)
-            
+
     for i, ax in enumerate(axs):
         mus = np.array(list(np.mean(distrib) for distrib in comb_lists[i]))
         gpl.plot_trace_werr(np.expand_dims(mus, 1), [-10], ax=axs[i])
         gpl.clean_plot(ax, i)
         gpl.add_vlines(0, ax)
-        
+
 
 @gpl.ax_adder()
 def plot_session_change_of_mind(*cond_dicts, ax=None):
@@ -56,13 +57,49 @@ def plot_session_change_of_mind(*cond_dicts, ax=None):
         gen_traj.append(np.stack(gen_traj_i, axis=0))
     corr_traj = np.stack(corr_traj, axis=0)
     gen_traj = np.stack(gen_traj, axis=0)
-    
+
     gpl.plot_colored_line(*corr_traj[:, 0], ax=ax, cmap="Blues")
     gpl.plot_colored_line(*corr_traj[:, 1], ax=ax, cmap="Greens")
     gpl.plot_colored_line(*gen_traj[:, 0], ax=ax, cmap="Blues")
     gpl.plot_colored_line(*gen_traj[:, 1], ax=ax, cmap="Greens")
     gpl.add_hlines(0, ax)
     gpl.add_vlines(0, ax)
+
+
+@gpl.ax_adder(three_dim=True)
+def visualize_orientation_positions(
+    pop_dict,
+    xs,
+    x_targ=0,
+    sess_ind=0,
+    ax=None,
+    mu=True,
+    dim_red=skd.PCA,
+    cmaps=None,
+):
+    activity_all = []
+    activity_groups = []
+    x_ind = np.argmin(np.abs(xs - x_targ))
+    if cmaps is None:
+        colors = ("Blues", "Reds", "Greens", "Oranges") * len(pop_dict)
+    for k, vs in pop_dict.items():
+        vs = list(v[sess_ind] for v in vs)
+        if mu:
+            vs = list(np.mean(v, axis=2, keepdims=True) for v in vs)
+        activity_all.extend(vs)
+        com_k = np.concatenate(vs, axis=2)
+        activity_groups.append(np.squeeze(com_k[..., x_ind], axis=1).T)
+    comb_vs = np.concatenate(activity_all, axis=2)
+    comb_vs = np.squeeze(comb_vs[..., x_ind], axis=1)
+    dr = dim_red(3)
+    dr.fit(comb_vs.T)
+    for i, ag in enumerate(activity_groups):
+        rep = dr.transform(ag)
+        cmap = plt.get_cmap(colors[i])
+        plt.scatter
+        ax.scatter(*rep.T, c=np.linspace(.5, .99, len(ag)), cmap=cmap)
+        ax.plot(*rep[[0, 1, 2, 3, 0]].T, color=cmap(.5))
+    # gpl.plot_highdim_trace(*activity_groups, p=dr, ax=ax, plot_points=True)
 
 
 def visualize_rdms(combs, rdm, **kwargs):

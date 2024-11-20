@@ -7,24 +7,77 @@ import general.neural_analysis as na
 import general.data_io as gio
 
 
-def equals_one(x):
-    return x == 1
+def equals_one_zero(x):
+    return _equals(x, 1, 0)
+
+
+def _equals(x, t1, t2):
+    return x == t1, x == 2
 
 
 def equal_0(x):
     return x == 0
 
 
-def _less_than_y(x, y):
-    return x < y
+def _less_than_greater_than_y(x, y):
+    return x < y, x >= y
 
 
-def less_than_180(x):
-    return _less_than_y(x, 180)
+def less_than_greater_than_180(x):
+    return _less_than_greater_than_y(x, 180)
 
 
-def less_than_2(x):
-    return _less_than_y(x, 2)
+def less_than_greater_than_2(x):
+    return _less_than_greater_than_y(x, 2)
+
+
+def get_all_conjunctive_pops(
+    data, mask_dict, tbeg, tend, winsize=500, stepsize=50, tzfs="choice_start", **kwargs
+):
+    out_dict = {}
+    for k, masks in mask_dict.items():
+        xs, pops = data.get_dec_pops(
+            winsize, tbeg, tend, stepsize, *masks, tzfs=tzfs, **kwargs
+        )
+        out_dict[k] = pops
+    return out_dict, xs
+
+
+full_quads = (
+    (1, 1),
+    (1, 0),
+    (0, 1),
+    (0, 0),
+)
+
+
+def direction_position_conjunction_masks(data, quads=full_quads, rots=(0, 1, 2, 3)):
+    ns = data["IsNorth"]
+    ew = data["IsEast"]
+    rot = data["choice_rotation"]
+
+    if rots is None:
+        rots = (None,)
+    full_dict = {}
+    for ns_i, ew_i in quads:
+        quad_list = []
+        for rot_i in rots:
+            if ns_i is not None:
+                m1 = ns == ns_i
+            else:
+                m1 = ns > -10
+            if ew_i is not None:
+                m2 = ew == ew_i
+            else:
+                m2 = ew > -10
+            if rot_i is not None:
+                m3 = rot == rot_i
+            else:
+                m3 = rot > -10
+            mask = m1.rs_and(m2).rs_and(m3)
+            quad_list.append(mask)
+        full_dict[(ns_i, ew_i)] = quad_list
+    return full_dict
 
 
 def _boundary_vis_wrap(fields):
@@ -32,7 +85,7 @@ def _boundary_vis_wrap(fields):
     ew = gio.ResultSequence(x["IsEast"] for x in fields)
     rot = gio.ResultSequence(x["choice_rotation"] for x in fields)
     out = _boundary_vis(ns, ew, rot)
-    return out[0]
+    return out
 
 
 def _boundary_vis(ns, ew, rot):
@@ -50,8 +103,7 @@ def _boundary_vis(ns, ew, rot):
 
 
 default_funcs = {
-    "choice orientation": less_than_2,
-    "rewarded": equal_0,
+    "choice orientation": less_than_greater_than_2,
     "boundary visible": _boundary_vis_wrap,
 }
 
@@ -83,7 +135,7 @@ default_dec_variables = {
     "choice orientation": "choice_rotation",
     "boundary visible": ["IsNorth", "IsEast", "choice_rotation"],
     "rule": "Float9_RuleEW0NS1",
-    "rewarded": "TrialError",
+    "rewarded": "correct_trial",
 }
 
 
@@ -131,9 +183,8 @@ def make_variable_masks(
         func_dict = default_funcs
     masks = {}
     for k, v in dec_variables.items():
-        func = func_dict.get(k, equals_one)
-        m1 = func(data[v])
-        m2 = func(data[v]).rs_not()
+        func = func_dict.get(k, equals_one_zero)
+        m1, m2 = func(data[v])
         if and_mask is not None:
             m1 = m1.rs_and(and_mask)
             m2 = m2.rs_and(and_mask)
@@ -257,11 +308,12 @@ def make_variable_generalization_masks(
     masks_gen = {}
     for k, (m1, m2) in masks.items():
         for cv in contrast_variables[k]:
-            func = func_dict.get(cv, equals_one)
-            m1_p = m1.rs_and(func(data[cv]))
-            m2_p = m2.rs_and(func(data[cv]))
-            m1_n = m1.rs_and(~func(data[cv]))
-            m2_n = m2.rs_and(~func(data[cv]))
+            func = func_dict.get(cv, equals_one_zero)
+            c1, c2 = func(data[cv])
+            m1_p = m1.rs_and(c1)
+            m2_p = m2.rs_and(c1)
+            m1_n = m1.rs_and(c2)
+            m2_n = m2.rs_and(c2)
             fcv = "{} x {}".format(k, cv)
             masks_gen[fcv] = ((m1_p, m2_p), (m1_n, m2_n))
     return masks_gen
