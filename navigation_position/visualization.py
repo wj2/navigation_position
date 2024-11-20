@@ -75,13 +75,19 @@ def visualize_orientation_positions(
     ax=None,
     mu=True,
     dim_red=skd.PCA,
-    cmaps=None,
+    pt_cmap="magma",
+    pd_colors=None,
 ):
     activity_all = []
     activity_groups = []
     x_ind = np.argmin(np.abs(xs - x_targ))
-    if cmaps is None:
-        colors = ("Blues", "Reds", "Greens", "Oranges") * len(pop_dict)
+    if pd_colors is None:
+        pd_colors = (
+            plt.get_cmap("Blues")(0.5),
+            plt.get_cmap("Reds")(0.5),
+            plt.get_cmap("Greens")(0.5),
+            plt.get_cmap("Oranges")(0.5),
+        )
     for k, vs in pop_dict.items():
         vs = list(v[sess_ind] for v in vs)
         if mu:
@@ -95,11 +101,8 @@ def visualize_orientation_positions(
     dr.fit(comb_vs.T)
     for i, ag in enumerate(activity_groups):
         rep = dr.transform(ag)
-        cmap = plt.get_cmap(colors[i])
-        plt.scatter
-        ax.scatter(*rep.T, c=np.linspace(.5, .99, len(ag)), cmap=cmap)
-        ax.plot(*rep[[0, 1, 2, 3, 0]].T, color=cmap(.5))
-    # gpl.plot_highdim_trace(*activity_groups, p=dr, ax=ax, plot_points=True)
+        ax.scatter(*rep.T, c=np.linspace(0, 1, len(rep) + 1)[:-1], cmap=pt_cmap)
+        ax.plot(*rep[[0, 1, 2, 3, 0]].T, color=pd_colors[i])
 
 
 def visualize_rdms(combs, rdm, **kwargs):
