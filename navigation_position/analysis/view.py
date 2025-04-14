@@ -24,14 +24,14 @@ def decode_feature(
     reps,
     labels,
     n_folds=20,
-    test_frac=0.1,
-    model=skm.LinearSVC,
+    test_frac=0.2,
+    model=skm.SVC,
     return_estimator=False,
     **kwargs,
 ):
     if len(reps.shape) > 2:
         reps = np.reshape(reps, (reps.shape[0], -1))
-    pipe = na.make_model_pipeline(model=model, dual="auto", **kwargs)
+    pipe = na.make_model_pipeline(model=model, **kwargs)
     out = na.cv_wrapper(
         pipe,
         reps,
@@ -268,14 +268,39 @@ def visualize_tr_gen_condition_errors(
     visualize_condition_errors(te_conds, te_corr, cm=te_cm, ax=ax)
 
 
+def _von_mises_tuning(rots, wid=1, n_units=50):
+    cents = np.linspace(-np.pi, np.pi, n_units + 1)[:-1]
+    rep = np.exp(np.cos(np.radians(rots)[:, None] - cents[None]) / wid)
+    return rep
+
+
 def summarize_view_results(
-    mask_func, info, *reps, field="xPosition", thresh=500, axs=None, fwid=3, **kwargs,
+    mask_func,
+    info,
+    *reps,
+    field="xPosition",
+    thresh=500,
+    axs=None,
+    f=None,
+    fwid=3,
+    color=None,
+    add_rotation=True,
+    rotation_weight=1000,
+    rotation_key="rotation_rounded",
+    **kwargs,
 ):
     mask, mask_not = mask_func(info)
     if axs is None:
         f, axs = plt.subplots(len(reps), 2, figsize=(fwid * 2, fwid * len(reps)))
     for i, rep in enumerate(reps):
         targ = info[field] > thresh
+        if len(rep.shape) > 2:
+            rep = np.reshape(rep, (rep.shape[0], -1))
+
+        if add_rotation:
+            rot = _von_mises_tuning(info[rotation_key].to_numpy(), n_units=rep.shape[1])
+            rep = np.concatenate((rep, rot), axis=1)
+
         out_gen = generalize_feature_masks(
             rep,
             targ,
@@ -284,8 +309,18 @@ def summarize_view_results(
             **kwargs,
         )
         visualize_tr_gen_condition_errors(info, mask, mask_not, out_gen, ax=axs[i, 1])
-        gpl.violinplot([out_gen["test_score"], out_gen["gen"]], [0, 1], ax=axs[i, 0])
+        gpl.violinplot(
+            [out_gen["test_score"], out_gen["gen"]],
+            [0, 1],
+            ax=axs[i, 0],
+            color=(color, color),
+        )
         gpl.add_hlines(0.5, axs[i, 0])
+        gpl.clean_plot(axs[i, 0], 0)
+        gpl.clean_plot(axs[i, 1], 1)
+        gpl.clean_plot_bottom(axs[i, 1])
+        if i < len(reps) - 1:
+            gpl.clean_plot_bottom(axs[i, 0])
         axs[i, 0].set_xticks([0, 1])
         axs[i, 0].set_xticklabels(["within", "across"])
     return f, axs

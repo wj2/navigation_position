@@ -39,6 +39,29 @@ def get_all_conjunctive_pops(
     return out_dict, xs
 
 
+def format_conjunctions_for_decoding(pop_dict, sess_ind):
+    labels = []
+    pops = []
+    label_dict = {}
+    cond_num = 0
+    for i, (k, pd) in enumerate(pop_dict.items()):
+        pd_sess = list(x[sess_ind] for x in pd)
+        for j, pd_ij in enumerate(pd_sess):
+            n_trls = pd_ij.shape[2]
+            labels.extend((cond_num,) * n_trls)
+            pops.append(pd_ij)
+            label_dict[cond_num] = (k, j)
+            cond_num += 1
+    pops_all = np.concatenate(pops, axis=2)
+    return pops_all, np.array(labels)
+        
+
+def decode_conjunctions(pop, labels, folds_n=20, **kwargs):
+    pop = np.squeeze(pop, axis=1)
+    out = na.fold_skl_flat(pop, labels, folds_n, mean=False, **kwargs)
+    return out
+
+
 full_quads = (
     (1, 1),
     (1, 0),
@@ -181,8 +204,6 @@ def make_variable_masks(
     for k, v in dec_variables.items():
         func = func_dict.get(k, equals_one_zero)
         m1, m2 = func(data[v])
-        print(m1, m2, func)
-        print(list(np.mean(x) for x in m1), list(np.mean(x) for x in m2))
         if and_mask is not None:
             m1 = m1.rs_and(and_mask)
             m2 = m2.rs_and(and_mask)
@@ -394,14 +415,7 @@ def decode_times(data, time_dict=None, dec_vars=None, **kwargs):
     for time_k, ts in time_dict.items():
         out_dict[time_k] = {}
         for var_k, k_masks in masks.items():
-            print(var_k)
-            # print(k_masks)
-            # print(
-            #     list(np.mean(x) for x in k_masks[0]),
-            #     list(np.mean(x) for x in k_masks[1]),
-            # )
             out = decode_masks(data, *k_masks, *ts, time_k, **kwargs, ret_pops=True)
-            print(out[0].shape)
             out_dict[time_k][var_k] = out
     return out_dict
 

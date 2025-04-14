@@ -103,6 +103,7 @@ def visualize_orientation_positions(
         rep = dr.transform(ag)
         ax.scatter(*rep.T, c=np.linspace(0, 1, len(rep) + 1)[:-1], cmap=pt_cmap)
         ax.plot(*rep[[0, 1, 2, 3, 0]].T, color=pd_colors[i])
+    ax.set_aspect("equal")
 
 
 def visualize_rdms(combs, rdm, **kwargs):

@@ -26,9 +26,9 @@ classifiers = [
 ]
 dependencies = [
   "numpy~=1.26.4",
-  "pandas~=2.2.2",
-  "matplotlib~=3.9.2",
-  "scikit-learn~=1.5.1",
+  "pandas>=2.2.2",
+  "matplotlib>=3.9.2",
+  "scikit-learn>=1.5.1",
   "scikit-video~=1.1.11",
   "imbalanced-learn~=0.12.3",
   "rsatoolbox~=0.1.5",

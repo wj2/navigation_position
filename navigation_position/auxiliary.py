@@ -411,8 +411,8 @@ def load_gulli_hashim_data_folder(
                 data_all["target_right"] == 0,
             ),
         )
-        data_all.loc[ew_mask, "pink_right"] = None
-        data_all.loc[ns_mask, "white_right"] = None
+        data_all.loc[ew_mask, "pink_right"] = pd.NA
+        data_all.loc[ns_mask, "white_right"] = pd.NA
         data_all["pre_choice_rotation"] = extract_time_field(
             data_all,
             "post_rotation_end",
