@@ -603,16 +603,16 @@ def _make_shifted_data_masks(shift, data, *masks):
     fwd_mask = []
     assert shift > 0
 
-    new_masks = ([],) * len(masks)
+    new_masks = tuple([] for _ in masks)
     for i, trls in enumerate(data["Trial"]):
         m_fwd = np.ones(len(trls), dtype=bool)
-        m_fwd[shift:] = False
+        m_fwd[:shift] = False
         fwd_mask.append(m_fwd)
         
         m_bwd = np.ones(len(trls), dtype=bool)
         m_bwd[-shift:] = False
         for j, m_j in enumerate(masks):
-            m_ij = m_j[i]
+            m_ij = m_j[i].to_numpy()
             new_masks[j].append(m_ij[m_bwd])
         
     data_masked = data.mask(gio.ResultSequence(fwd_mask))
@@ -641,7 +641,7 @@ def decode_masks(
         kwargs["params"] = {"n_neighbors": n_neighbors}
     if shift != 0:
         data, (mask1, mask2) = _make_shifted_data_masks(shift, data, mask1, mask2)
-        
+
     out = data.decode_masks(
         mask1,
         mask2,
