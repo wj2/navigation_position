@@ -34,6 +34,7 @@ def create_parser():
     parser.add_argument("--decoder", default="linear")
     parser.add_argument("--balance_fields", default=None, nargs="+")
     parser.add_argument("--shift_trials", default=0, type=int)
+    parser.add_argument("--balance_training", default=False, action="store_true")
     return parser
 
 
@@ -92,6 +93,7 @@ def main():
         winsize=args.winsize,
         stepsize=args.stepsize,
         shift=args.shift_trials,
+        balance_training=args.balance_training,
     )
 
     out_fig_path = os.path.join(args.output_folder, out_fn + ".pdf")
