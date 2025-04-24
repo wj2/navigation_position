@@ -1,9 +1,11 @@
 import numpy as np
+import scipy.signal as sig
 import matplotlib.pyplot as plt
 import sklearn.manifold as skm
 import sklearn.decomposition as skd
 import itertools as it
 
+import general.utility as u
 import general.plotting as gpl
 
 
@@ -221,6 +223,134 @@ def plot_occupancy(
     cents = list(x[:-1] + np.diff(x)[0] / 2 for x in edges)
     gpl.pcolormesh(*cents, norm_freq, ax=ax, cmap=cm)
     return norm_freq
+
+
+@gpl.ax_adder(three_dim=True)
+def plot_trl_traj(
+    spks,
+    coloring=None,
+    ax=None,
+    cmap="coolwarm",
+    coloring_ind=0,
+    cmin=None,
+    cmax=None,
+    plot_min=True,
+    plot_max=True,
+    **kwargs,
+):
+    p = skd.PCA(3).fit(np.concatenate(spks, axis=0))
+    if coloring is not None:
+        color_all = np.concatenate(coloring)[:, coloring_ind]
+        if cmin is None:
+            cmin = np.min(color_all)
+        if cmax is None:
+            cmax = np.max(color_all)
+    else:
+        cmin = 0
+        cmax = 1
+    for i, spk in enumerate(spks):
+        spk_ld = p.transform(spk)
+        if coloring is not None:
+            ci = (coloring[i][:, coloring_ind] - cmin) / (cmax - cmin)
+            ci[ci > cmax] = cmax
+            ci[ci < cmin] = cmin
+        else:
+            ci = None
+        gpl.plot_colored_line(*spk_ld.T, ax=ax, cmap=cmap, col_inds=ci, **kwargs)
+        if plot_min:
+            inds = sig.argrelmin(ci)[0]
+            ax.scatter(*spk_ld[inds].T, color="k", **kwargs)
+        if plot_max:
+            inds = sig.argrelmax(ci)[0]
+            ax.scatter(*spk_ld[inds].T, color="r", **kwargs)
+        ax.scatter(*spk_ld[[0]].T, color="g", **kwargs)
+        ax.scatter(*spk_ld[[-1]].T, color="m", **kwargs)
+    ax.set_aspect("equal")
+
+
+def plot_pairwise_decoding_results(
+    xs,
+    dec_all,
+    conds,
+    inds1,
+    inds2=None,
+    sig_thr=0,
+    axs=None,
+    arr_len=8,
+    wid_range=(.5, 4),
+    fwid=5,
+    error_shading=False,
+    tzf="choice_start",
+    grey_col=(0.8,) * 3,
+    ind2_color="r",
+    eps=.01,
+):
+    if axs is None:
+        f, axs = plt.subplots(1, 2, figsize=(2 * fwid, fwid))
+    ax1, ax = axs
+    if inds2 is None:
+        inds2 = inds1
+
+    plot_conds(conds, arr_len=arr_len, ax=ax1, color=grey_col)
+    plot_conds(
+        conds[inds1],
+        arr_len=arr_len,
+        ax=ax1,
+    )
+    plot_conds(
+        conds[inds2],
+        arr_len=arr_len,
+        ax=ax1,
+        color=ind2_color,
+    )
+
+    to_plot = []
+    max_decs = []
+    for i, j in it.product(inds1, inds2):
+        if i < j:
+            bounds = np.nanmean(dec_all[i, j], axis=0) + gpl.std(dec_all[i, j])
+            high = np.any(np.all(bounds > 0.5 + sig_thr, axis=0))
+            low = np.any(np.all(bounds < 0.5 - sig_thr, axis=0))
+            if high or low:
+                ci = conds[i]
+                cj = conds[j]
+                ci = ci[:2] + arr_len * u.radian_to_sincos(np.radians(ci[-1]))
+                cj = cj[:2] + arr_len * u.radian_to_sincos(np.radians(cj[-1]))
+                if high:
+                    max_decs.append(np.max(np.nanmean(dec_all[i, j], axis=0)))
+                if low:
+                    max_decs.append(np.min(np.nanmean(dec_all[i, j], axis=0)))
+                    
+                to_plot.append((xs, dec_all[i, j], np.stack((ci, cj), axis=1)))
+
+    colors = plt.get_cmap("magma")(np.linspace(0, 1, len(to_plot) + 1)[:-1])
+    max_decs = np.array(max_decs)
+    min_dec = np.min(max_decs) - eps
+    max_dec = np.max(max_decs) + eps
+    norm_dec = (max_decs - min_dec) / (max_dec - min_dec)
+    wids = norm_dec * (wid_range[1] - wid_range[0]) + wid_range[0]
+    for i, (xs, da, cij) in enumerate(to_plot):
+        if error_shading:
+            gpl.plot_trace_werr(xs, da, ax=ax, confstd=True, color=colors[i])
+        else:
+            ax.plot(xs, np.mean(da, axis=0), color=colors[i])
+            gpl.clean_plot(ax, 0)
+        ax1.plot(*cij, lw=wids[i], color=colors[i])
+
+    ax.set_xlabel("time from {}".format(tzf))
+    ax.set_ylabel("condition decoding")
+    gpl.clean_plot(ax1, 1)
+    gpl.clean_plot_bottom(ax1)
+    gpl.add_hlines(0.5, ax)
+    
+
+
+@gpl.ax_adder()
+def plot_conds(conds, ax=None, arr_len=8, color="k"):
+    for cond in conds:
+        ax.plot(*cond[:2], "o", color=color)
+        cond_d = arr_len * u.radian_to_sincos(np.radians(cond[-1]))
+        ax.arrow(*cond[:2], *cond_d, color=color)
 
 
 @gpl.ax_adder(include_fig=True)

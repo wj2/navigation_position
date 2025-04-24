@@ -102,7 +102,40 @@ info_rename_dict = {
     "UserVars.VR_Trial.Fix_Position_World.x": "eye_world_x",
     "UserVars.VR_Trial.Fix_Position_World.y": "eye_world_z",
     "UserVars.VR_Trial.Fix_Position_World.z": "eye_world_y",
+    "UserVars.VR_Trial.Additional_Positions.x": "waypoints_x",
+    "UserVars.VR_Trial.Additional_Positions.y": "waypoints_z",
+    "UserVars.VR_Trial.Additional_Positions.z": "waypoints_y",
 }
+
+
+def combine_temporal_keys(data, keys, filt_func=None, tzf=None, tbeg=0, tend=None):
+    tks = data[list(keys)]
+    out = []
+    if tzf is not None:
+        tzs = data[tzf]
+    for i, tk in enumerate(tks):
+        tk_arr = tk.to_numpy()
+        out_sess = []
+        for j, tk_ij in enumerate(tk_arr):
+            if tzf is not None:
+                tz_ij = tzs[i].iloc[j]
+                if tend is None:
+                    end = None
+                else:
+                    end = int(tz_ij + tend)
+                sl = slice(int(tz_ij + tbeg), end)
+            else:
+                sl = slice(0, None)
+            if u.check_list(tk_ij[0]):
+                x = np.stack(tk_ij, axis=1)
+            else:
+                x = tk_ij[None]
+            x = x[sl]
+            if filt_func is not None:
+                x = filt_func(x)
+            out_sess.append(x)
+        out.append(out_sess)
+    return out
 
 
 def find_crossings(trl_pos, border=500, thresh=2):
@@ -199,6 +232,38 @@ def extract_time_field(data, t_field, extract_field):
             val = row[int(times[i])]
         fvs[i] = val
     return fvs
+
+
+def make_unique_conds(
+    data,
+    keys=("choice_pos_x", "choice_pos_y", "pre_choice_rotation"),
+    rounds=(10, 10, 15),
+    periodic=(False, False, True),
+    rot_only=False,
+):
+    if rot_only:
+        keys = ("pre_choice_rotation",)
+        rounds = (15,)
+        periodic = (True,)
+    out = []
+    entries = data[list(keys)]
+    for ent in entries:
+        arr = ent.to_numpy()
+        comb = []
+        for j in range(len(keys)):
+            rounded = round_conds(arr[:, j], factor=rounds[j])
+            if periodic[j]:
+                rounded = (
+                    np.degrees(u.normalize_periodic_range(np.radians(rounded))) + 180
+                )
+            comb.append(rounded)
+        out.append(np.stack(comb, axis=1))
+    return gio.ResultSequence(out)
+
+
+def round_conds(arr, factor=10):
+    pts_all = np.round(arr / factor) * factor
+    return pts_all
 
 
 def discretize_rotation(rots, cents=(0, 90, 180, 270)):
@@ -330,6 +395,21 @@ date_task_dict = {
 }
 
 
+def extract_tc_position(xs, ys, ts):
+    x_pos = np.zeros(len(xs))
+    y_pos = np.zeros(len(xs))
+    for i, x_i in enumerate(xs):
+        y_i = ys[i]
+        if np.isnan(ts[i]):
+            x_pos[i] = np.nan
+            y_pos[i] = np.nan
+        else:
+            ind = int(ts[i])
+            x_pos[i] = x_i[ind]
+            y_pos[i] = y_i[ind]
+    return x_pos, y_pos
+
+
 def load_gulli_hashim_data_folder(
     folder,
     session_template=session_template,
@@ -417,6 +497,11 @@ def load_gulli_hashim_data_folder(
             data_all,
             "post_rotation_end",
             "rotation_tc",
+        )
+        data_all["choice_pos_x"], data_all["choice_pos_y"] = extract_tc_position(
+            data_all["pos_x"],
+            data_all["pos_y"],
+            data_all["choice_start"],
         )
         data_all["choice_rotation"] = discretize_rotation(
             data_all["pre_choice_rotation"],

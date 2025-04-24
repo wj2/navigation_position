@@ -1,13 +1,13 @@
 import numpy as np
 import sklearn.svm as skm
-import sklearn.model_selection as skms
 import matplotlib.pyplot as plt
 import itertools as it
 
-import general.utility as u
 import general.plotting as gpl
 import general.neural_analysis as na
 import general.tf.networks as gtfn
+import general.data_io as gio
+import navigation_position.auxiliary as npa
 
 
 def get_network_view_representations(views, model_tuple=None, flatten=True, **kwargs):
@@ -18,6 +18,70 @@ def get_network_view_representations(views, model_tuple=None, flatten=True, **kw
     if flatten:
         reps = np.reshape(reps, (reps.shape[0], -1))
     return reps
+
+
+def get_view_trajectories(data, tzf="choice_start", **kwargs):
+    eps = npa.combine_temporal_keys(
+        data, ("eye_x", "eye_y"), tzf="choice_start", **kwargs
+    )
+    return eps
+
+
+def get_high_view_mask(*args, thresh=25, tbeg=-500, tend=500, **kwargs):
+    eps = get_view_trajectories(*args, **kwargs)
+    high_masks = []
+    for ep in eps:
+        high_mask = np.array(list(np.any(x[:, 1] > 25) for x in ep))
+        high_masks.append(high_mask)
+    return gio.ResultSequence(high_masks)
+
+
+def eye_position_map(
+    data,
+    sess_ind=0,
+    fwid=2,
+    cmap="hsv",
+    cross_len=2,
+    axs=None,
+    s=0.1,
+    feat_ind=-1,
+    make_map=False,
+    **kwargs,
+):
+    conds = npa.make_unique_conds(data)[sess_ind][:, feat_ind][:, None]
+    eye_pos = np.array(get_view_trajectories(data, **kwargs)[sess_ind], dtype=object)
+    cm = plt.get_cmap(cmap)
+    conds_u = np.unique(conds, axis=0)
+    if axs is None:
+        n_conds = len(conds_u)
+        n = int(np.ceil(np.sqrt(n_conds)))
+        f, axs = plt.subplots(
+            n, n, sharex=True, sharey=True, figsize=(n * fwid, n * fwid)
+        )
+        axs = axs.flatten()
+    for i, cond in enumerate(conds_u):
+        mask = np.all(cond == conds, axis=1)
+        trls = eye_pos[mask]
+        c = cm(i / len(conds_u))
+        cm_i = gpl.make_linear_cmap(c)
+        if make_map:
+            all_pos = np.concatenate(trls, axis=0)
+            all_pos = all_pos[~np.any(np.isnan(all_pos), axis=1)]
+            weights, (xs, ys) = np.histogramdd(all_pos, bins=20)
+            xs_cent = xs[:-1] + np.diff(xs)[0] / 2
+            ys_cent = ys[:-1] + np.diff(ys)[0] / 2
+
+            gpl.pcolormesh(
+                xs_cent, ys_cent, np.log(weights + 1).T, ax=axs[i], cmap=cm_i
+            )
+        else:
+            for t in trls:
+                axs[i].scatter(*t.T, c=np.arange(len(t)), cmap=cm_i, s=s)
+        axs[i].plot([-cross_len, cross_len], [0, 0], color="k")
+        axs[i].plot([0, 0], [-cross_len, cross_len], color="k")
+        axs[i].set_aspect("equal")
+        gpl.clean_plot(axs[i], 1)
+        gpl.clean_plot_bottom(axs[i])
 
 
 def decode_feature(

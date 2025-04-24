@@ -1,10 +1,14 @@
 import numpy as np
+import scipy.signal as sig
 import sklearn.neighbors as sknn
 import imblearn.under_sampling as imb_us
+import sklearn.metrics.pairwise as skmp
+import itertools as it
 
 import rsatoolbox as rsa
 import general.neural_analysis as na
 import general.data_io as gio
+import navigation_position.auxiliary as npa
 
 
 def equals_one_zero(x):
@@ -25,6 +29,230 @@ def less_than_greater_than_180(x):
 
 def less_than_greater_than_2(x):
     return _less_than_greater_than_y(x, 2)
+
+
+def _format_spikes(spk):
+    pairs = []
+    for ind, spk_i in enumerate(spk):
+        arr_ind = np.stack((spk_i, np.ones_like(spk_i) * ind), axis=1)
+        pairs.append(arr_ind)
+
+    return np.concatenate(pairs, axis=0)
+
+
+def _filter_neg(x):
+    return x[np.all(x > 0, axis=1)]
+
+
+default_waypoint_keys = (
+    "UserVars.VR_Trial.Additional_Positions.x",
+    "UserVars.VR_Trial.Additional_Positions.z",
+)
+
+
+def get_waypoint_locs(data, waypoint_keys=default_waypoint_keys):
+    return npa.combine_temporal_keys(data, waypoint_keys, filt_func=_filter_neg)
+
+
+def decode_prior_field(
+    data,
+    field,
+    tbeg,
+    tend,
+    binsize=500,
+    binstep=50,
+    time_zero_field="choice_start",
+    regions=None,
+    n_trials=1,
+    n_folds=50,
+    **kwargs,
+):
+    pops, xs = data.get_populations(
+        binsize,
+        tbeg,
+        tend,
+        binstep,
+        time_zero_field=time_zero_field,
+        regions=regions,
+    )
+    targs = data[field]
+    outs = []
+    for i, pop in enumerate(pops):
+        targ = targs[i]
+        targ_shift = targ.to_numpy().astype(bool)[:-n_trials]
+        pop_shift = pop[n_trials:]
+        out = na.fold_skl_shape(pop_shift, targ_shift, n_folds, mean=False, **kwargs)
+        outs.append(out)
+    return outs, xs
+
+
+def decode_pairs_pop(
+    pop,
+    cond,
+    n_folds=50,
+    test_prop=0.1,
+    ret_dicts=False,
+    shuffle=False,
+    info=None,
+    **kwargs,
+):
+    u_conds = np.unique(cond, axis=0)
+    combs = it.combinations(range(len(u_conds)), 2)
+    out_dec = np.zeros((len(u_conds), len(u_conds), n_folds, pop.shape[-1]))
+    if info is not None:
+        info = info.to_numpy()
+    if ret_dicts:
+        out_dicts = {}
+    combs = ((0, 7),)
+    for i, j in combs:
+        m1 = np.all(u_conds[i] == cond, axis=1)
+        m2 = np.all(u_conds[j] == cond, axis=1)
+        pop_ij = np.concatenate((pop[m1], pop[m2]), axis=0)
+        label_ij = np.concatenate((np.ones(sum(m1)), np.zeros(sum(m2))))
+        if info is not None:
+            info_ij = np.concatenate((info[m1], info[m2]), axis=0)
+            info_ij = np.concatenate((info_ij, label_ij[:, None]), axis=1)
+
+        out = na.fold_skl_shape(
+            pop_ij,
+            label_ij,
+            n_folds,
+            test_prop=test_prop,
+            mean=False,
+            balance_rel_fields=True,
+            rel_flat=label_ij,
+            shuffle=shuffle,
+            **kwargs,
+        )
+        out_dec[i, j] = out["score"]
+        if ret_dicts:
+            out["pop_ij"] = pop_ij
+            out["label_ij"] = label_ij
+            if info is not None:
+                out["info_ij"] = info_ij
+            out_dicts[(i, j)] = out
+    if ret_dicts:
+        out_full = (out_dec, out_dicts)
+    else:
+        out_full = out_dec
+    return out_full
+
+
+def decode_pairs(
+    data,
+    tbeg,
+    tend,
+    binsize=500,
+    binstep=50,
+    rot_only=False,
+    time_zero_field="choice_start",
+    info_fields=("correct_trial", "white_right"),
+    **kwargs,
+):
+    pops, xs = data.get_populations(
+        binsize,
+        tbeg,
+        tend,
+        binstep,
+        time_zero_field=time_zero_field,
+    )
+    conds = npa.make_unique_conds(data, rot_only=rot_only)
+    info = data[list(info_fields)]
+    outs = []
+    for i, pop in enumerate(pops):
+        out = decode_pairs_pop(pop, conds[i], info=info[i], **kwargs)
+        outs.append(out)
+    return outs, xs
+
+
+def get_distance_to_nearest_waypoint(pos, waypoint_locs):
+    wp_dists = []
+    for i, pos_i in enumerate(pos):
+        wps = waypoint_locs[i]
+        wps_pos = np.concatenate((pos_i[:1], wps, pos_i[-1:]), axis=0)
+        min_dist = np.min(
+            skmp.euclidean_distances(pos_i, wps_pos), axis=1, keepdims=True
+        )
+        wp_dists.append(min_dist)
+    return wp_dists
+
+
+def _bin_spiketimes(spks, ts, n_neurs, start=None, end=None, binsize=100, binstep=100):
+    if start is None:
+        start = 0
+    step = np.gcd(binsize, binstep)
+    filt = np.ones((int(binsize / binstep), 1))
+    filt = filt / np.sum(filt)
+    neur_bins = np.arange(n_neurs + 1)
+    if end is None:
+        end = ts[-1]
+    b_edges = np.arange(start - binsize / 2, end + 2 * binsize, step)
+    b_cents = b_edges[:-1] + np.diff(b_edges)[0] / 2
+
+    grouped, _ = np.histogramdd(spks, bins=(b_edges, neur_bins))
+    grouped = sig.convolve(grouped, filt, mode="valid")
+    b_cents = sig.convolve(b_cents, filt[:, 0], mode="valid")
+    return grouped, b_cents
+
+
+def position_populations(
+    data,
+    start_field=None,
+    end_field=None,
+    binsize=100,
+    binstep=100,
+    pos_keys=("pos_x", "pos_y"),
+    spks="spikeTimes",
+    n_neurs="n_neurs",
+    concat_trials=True,
+    regions=None,
+    regions_key="neur_regions",
+    **kwargs,
+):
+    spks_all = data[spks]
+    pos_all = data[list(pos_keys)]
+    if start_field is not None:
+        start_ts = data[start_field]
+    if end_field is not None:
+        end_ts = data[end_field]
+    sess_out = []
+    n_neurs = data[n_neurs]
+
+    for i, spks in enumerate(spks_all):
+        trl_spks_all = []
+        trl_fields_all = []
+        nn_i = n_neurs[i]
+
+        if regions is not None:
+            rs = data[regions_key][i].iloc[0]
+            r_mask = np.isin(rs, regions)
+        else:
+            r_mask = np.ones(nn_i, dtype=bool)
+
+        for j, spk_ij in enumerate(spks):
+            spk_ij = _format_spikes(spk_ij)
+            pos_ij = np.stack(pos_all[i].iloc[j]).T
+            if start_field is not None:
+                s_ij = start_ts[i].iloc[j]
+            else:
+                s_ij = None
+            if end_field is not None:
+                e_ij = end_ts[i].iloc[j]
+            else:
+                e_ij = None
+            ts = np.arange(pos_ij.shape[0])
+            b_spk_ij, ts = _bin_spiketimes(
+                spk_ij, ts, nn_i, s_ij, e_ij, binsize=binsize, binstep=binstep
+            )
+            f_ij = pos_ij[np.round(ts).astype(int)]
+            b_spk_ij = b_spk_ij[:, r_mask]
+            trl_spks_all.append(b_spk_ij)
+            trl_fields_all.append(f_ij)
+        if concat_trials:
+            trl_spks_all = np.concatenate(trl_spks_all, axis=0)
+            trl_fields_all = np.concatenate(trl_fields_all, axis=0)
+        sess_out.append((trl_spks_all, trl_fields_all))
+    return sess_out
 
 
 def get_all_conjunctive_pops(
@@ -54,7 +282,7 @@ def format_conjunctions_for_decoding(pop_dict, sess_ind):
             cond_num += 1
     pops_all = np.concatenate(pops, axis=2)
     return pops_all, np.array(labels)
-        
+
 
 def decode_conjunctions(pop, labels, folds_n=20, **kwargs):
     pop = np.squeeze(pop, axis=1)
@@ -371,6 +599,27 @@ def decode_masks_reverse(
     return dec, xs, gen
 
 
+def _make_shifted_data_masks(shift, data, *masks):
+    fwd_mask = []
+    assert shift > 0
+
+    new_masks = ([],) * len(masks)
+    for i, trls in enumerate(data["Trial"]):
+        m_fwd = np.ones(len(trls), dtype=bool)
+        m_fwd[shift:] = False
+        fwd_mask.append(m_fwd)
+        
+        m_bwd = np.ones(len(trls), dtype=bool)
+        m_bwd[-shift:] = False
+        for j, m_j in enumerate(masks):
+            m_ij = m_j[i]
+            new_masks[j].append(m_ij[m_bwd])
+        
+    data_masked = data.mask(gio.ResultSequence(fwd_mask))
+    new_masks = list(gio.ResultSequence(m) for m in new_masks)
+    return data_masked, new_masks
+
+
 def decode_masks(
     data,
     mask1,
@@ -384,11 +633,15 @@ def decode_masks(
     gen_mask2=None,
     use_nearest_neighbors=False,
     n_neighbors=5,
+    shift=0,
     **kwargs,
 ):
     if use_nearest_neighbors:
         kwargs["model"] = sknn.KNeighborsClassifier
         kwargs["params"] = {"n_neighbors": n_neighbors}
+    if shift != 0:
+        data, (mask1, mask2) = _make_shifted_data_masks(shift, data, mask1, mask2)
+        
     out = data.decode_masks(
         mask1,
         mask2,

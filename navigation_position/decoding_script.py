@@ -22,7 +22,7 @@ def create_parser():
     )
     parser.add_argument(
         "--output_template",
-        default="dec_{region}{conds}-w{winsize}-s{stepsize}_{date}_{jobid}",
+        default="dec_{region}{conds}-w{winsize}-s{stepsize}-shift{shift}_{date}_{jobid}",
     )
     parser.add_argument("--winsize", default=500, type=int)
     parser.add_argument("--stepsize", default=50, type=int)
@@ -33,6 +33,7 @@ def create_parser():
     parser.add_argument("--regions", default=None, nargs="+")
     parser.add_argument("--decoder", default="linear")
     parser.add_argument("--balance_fields", default=None, nargs="+")
+    parser.add_argument("--shift_trials", default=0, type=int)
     return parser
 
 
@@ -74,6 +75,7 @@ def main():
         balance_fields=args.balance_fields,
         winsize=args.winsize,
         stepsize=args.stepsize,
+        shift=args.shift,
         **decoder_kwargs,
     )
     f, _ = npv.visualize_decoding_dict(out_all)
@@ -89,6 +91,7 @@ def main():
         jobid=args.jobid,
         winsize=args.winsize,
         stepsize=args.stepsize,
+        shift=args.shift,
     )
 
     out_fig_path = os.path.join(args.output_folder, out_fn + ".pdf")
