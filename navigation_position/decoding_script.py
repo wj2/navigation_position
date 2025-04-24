@@ -75,7 +75,7 @@ def main():
         balance_fields=args.balance_fields,
         winsize=args.winsize,
         stepsize=args.stepsize,
-        shift=args.shift,
+        shift=args.shift_trials,
         **decoder_kwargs,
     )
     f, _ = npv.visualize_decoding_dict(out_all)
@@ -91,7 +91,7 @@ def main():
         jobid=args.jobid,
         winsize=args.winsize,
         stepsize=args.stepsize,
-        shift=args.shift,
+        shift=args.shift_trials,
     )
 
     out_fig_path = os.path.join(args.output_folder, out_fn + ".pdf")
