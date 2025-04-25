@@ -77,7 +77,7 @@ def main():
         winsize=args.winsize,
         stepsize=args.stepsize,
         shift=args.shift_trials,
-        balance_training=args.balance_training
+        balance_training=args.balance_training,
         **decoder_kwargs,
     )
     f, _ = npv.visualize_decoding_dict(out_all)
