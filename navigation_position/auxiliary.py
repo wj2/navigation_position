@@ -108,6 +108,50 @@ info_rename_dict = {
 }
 
 
+saccade_timing = "SaccadeStruct.StartTime"
+saccade_starts = ("SaccadeStruct.StartPointX", "SaccadeStruct.StartPointY")
+saccade_ends = ("SaccadeStruct.EndPointX", "SaccadeStruct.EndPointY")
+
+
+def get_saccade_info(
+    data,
+    tzf=None,
+    tbeg=0,
+    tend=None,
+    saccade_timing=saccade_timing,
+    saccade_starts=saccade_starts,
+    saccade_ends=saccade_ends,
+):
+    out_start = []
+    out_end = []
+    out_times = []
+    if tzf is not None:
+        tzs = data[tzf]
+    saccade_times = data[saccade_timing]
+    starts = data[list(saccade_starts)]
+    ends = data[list(saccade_ends)]
+    if tend is None:
+        tend = np.inf
+    for i, st_i in enumerate(saccade_times):
+        ends_i = []
+        starts_i = []
+        times_i = []
+        for j, st_ij in enumerate(st_i):
+            st_ij = np.array(st_ij)
+            if tzf is not None:
+                st_ij = st_ij - tzs[i].iloc[j]
+            t_mask = np.logical_and(st_ij >= tbeg, st_ij < tend)
+            times_i.append(st_ij[t_mask])
+            s = np.stack(starts[i].iloc[j].to_numpy(), axis=1)
+            starts_i.append(s[t_mask])
+            e = np.stack(ends[i].iloc[j].to_numpy(), axis=1)
+            ends_i.append(e[t_mask])
+        out_start.append(starts_i)
+        out_end.append(ends_i)
+        out_times.append(times_i)
+    return out_times, out_start, out_end
+            
+
 def combine_temporal_keys(data, keys, filt_func=None, tzf=None, tbeg=0, tend=None):
     tks = data[list(keys)]
     out = []
@@ -133,7 +177,8 @@ def combine_temporal_keys(data, keys, filt_func=None, tzf=None, tbeg=0, tend=Non
             x = x[sl]
             if filt_func is not None:
                 x = filt_func(x)
-            out_sess.append(x)
+            ts = np.arange(len(x)) + tbeg
+            out_sess.append((x, ts))
         out.append(out_sess)
     return out
 
@@ -216,8 +261,9 @@ def mask_completed_trials(
 def mask_uninstructed_trials(
     data,
     instructed_field="IsInstructed",
+    targ=0,
 ):
-    mask = data[instructed_field] == 0
+    mask = data[instructed_field] == targ
     return data.mask(mask)
 
 

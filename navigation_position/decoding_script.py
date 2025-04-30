@@ -30,6 +30,7 @@ def create_parser():
     parser.add_argument("--use_inds", default=None, nargs="+", type=int)
     parser.add_argument("--correct_only", default=False, action="store_true")
     parser.add_argument("--include_instructed", default=False, action="store_true")
+    parser.add_argument("--instructed_only", default=False, action="store_true")
     parser.add_argument("--regions", default=None, nargs="+")
     parser.add_argument("--decoder", default="linear")
     parser.add_argument("--balance_fields", default=None, nargs="+")
@@ -60,7 +61,10 @@ def main():
     cond_s = ""
     if args.correct_only:
         cond_s = cond_s + "_correct"
-    if not args.include_instructed:
+    if args.instructed_only:
+        data_use = npa.mask_uninstructed_trials(data_use, targ=1)
+        cond_s = cond_s + "_instructed-only"
+    elif not args.include_instructed:
         data_use = npa.mask_uninstructed_trials(data_use)
     else:
         cond_s = cond_s + "_instructed"
