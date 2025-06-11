@@ -27,6 +27,36 @@ def get_view_trajectories(data, tzf="choice_start", **kwargs):
     return eps
 
 
+def get_nth_fixation(data, n, start_or_end="end", tzf="choice_start", **kwargs):
+    starts, ends, start_xy, end_xy = npa.get_saccade_info(
+        data, tzf=tzf, sub_tzf=False, **kwargs
+    )
+    if start_or_end == "end":
+        ts = ends
+        xys = end_xy
+    else:
+        ts = starts
+        xys = start_xy
+    ts_out = []
+    xys_out = []
+
+    for i, t_i in enumerate(ts):
+        out_t_i = np.zeros(len(t_i))
+        out_xy_i = np.zeros((len(t_i), 2))
+        for j, t_ij in enumerate(t_i):
+            if len(t_ij) > n:
+                out_t_i[j] = t_ij[n]
+                out_xy_i[j] = xys[i][j][n]
+            else:
+                out_t_i[j] = np.nan
+                out_xy_i[j] = np.nan
+        ts_out.append(out_t_i)
+        xys_out.append(out_xy_i)
+    ts_res = gio.ResultSequence(ts_out)
+    xy_res = gio.ResultSequence(xys_out)
+    return ts_res, xy_res
+
+
 def get_high_view_mask(*args, thresh=25, tbeg=-500, tend=500, **kwargs):
     eps = get_view_trajectories(*args, **kwargs)
     high_masks = []

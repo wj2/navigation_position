@@ -1,14 +1,17 @@
 import numpy as np
 import scipy.signal as sig
 import sklearn.neighbors as sknn
-import imblearn.under_sampling as imb_us
 import sklearn.metrics.pairwise as skmp
+import sklearn.svm as skm
+import imblearn.under_sampling as imb_us
 import itertools as it
 
 import rsatoolbox as rsa
 import general.neural_analysis as na
+import general.utility as u
 import general.data_io as gio
 import navigation_position.auxiliary as npa
+from . import view as npav
 
 
 def equals_one_zero(x):
@@ -136,6 +139,273 @@ def decode_pairs_pop(
     else:
         out_full = out_dec
     return out_full
+
+
+def decode_masks_fix_seq_gen(
+    data, tk, t1, t2, gk="generalization_trial", g1=0, g2=1, **kwargs
+):
+    m1 = data[tk] == t1
+    m2 = data[tk] == t2
+    g1 = data[gk] == g1
+    g2 = data[gk] == g2
+    m1_tr = m1.rs_and(g1)
+    m2_tr = m2.rs_and(g1)
+    m1_te = m1.rs_and(g2)
+    m2_te = m2.rs_and(g2)
+
+    return decode_masks_fix_seq(
+        data, m1_tr, m2_tr, decode_m1=m1_te, decode_m2=m2_te, **kwargs
+    )
+
+
+def decode_masks_fix_seq(
+    data,
+    m1,
+    m2,
+    tbeg=0,
+    tend=0,
+    winsize=200,
+    tzf="choice_start",
+    n_saccs=2,
+    min_trials=4,
+    test_prop=0.2,
+    n_folds=100,
+    decode_m1=None,
+    decode_m2=None,
+    **kwargs,
+):
+    out_start = data.decode_masks(
+        m1,
+        m2,
+        winsize,
+        tbeg,
+        tend,
+        winsize,
+        n_folds=n_folds,
+        time_zero_field=tzf,
+        min_trials_pseudo=min_trials,
+        test_prop=test_prop,
+        decode_m1=decode_m1,
+        decode_m2=decode_m2,
+        **kwargs,
+    )
+    dec_start, xs = out_start[:2]
+    decs = [dec_start]
+    if decode_m1 is not None:
+        gens = [out_start[-1]]
+    for i in range(n_saccs):
+        ts, _ = npav.get_nth_fixation(data, i, tzf=tzf)
+        if decode_m1 is not None:
+            use_ts = (ts,) * 4
+        else:
+            use_ts = (ts, ts)
+
+        out_i = data.decode_masks(
+            m1,
+            m2,
+            winsize,
+            tbeg,
+            tend,
+            winsize,
+            n_folds=n_folds,
+            time_zeros=use_ts,
+            min_trials_pseudo=min_trials,
+            test_prop=test_prop,
+            decode_m1=decode_m1,
+            decode_m2=decode_m2,
+            **kwargs,
+        )
+        dec_i = out_i[0]
+        decs.append(dec_i)
+        if decode_m1 is not None:
+            gens.append(out_i[-1])
+    decs_out = np.stack(decs, axis=1)
+    if decode_m1 is not None:
+        gens_out = np.stack(gens, axis=1)
+        out = (decs_out, xs, gens_out)
+    else:
+        out = (decs_out, xs)
+    return out
+
+
+def decode_strict_fixation_seq(
+    data, labels, n=2, initial_winsize=200, tzf="choice_start", **kwargs
+):
+    first_sacc, _ = npav.get_nth_fixation(data, 0, start_or_end="start", tzf=tzf)
+    initial = decode_strict_fixation(
+        data,
+        labels,
+        None,
+        fix_starts=data[tzf],
+        fix_ends=first_sacc,
+        tzf=tzf,
+        **kwargs,
+    )
+    out_dicts = list([] for _ in initial)
+    list(out_dicts[i].append(x) for i, x in enumerate(initial))
+
+    for i in range(n):
+        out_i = decode_strict_fixation(data, labels, i, tzf=tzf, **kwargs)
+        list(out_dicts[j].append(x) for j, x in enumerate(out_i))
+    return list(u.aggregate_dictionary(od) for od in out_dicts)
+
+
+def generalize_strict_fixation(dec_dict, targs):
+    pops = dec_dict["X"]
+    ests = dec_dict["estimators"]
+    n_pops = len(pops)
+    out = np.zeros((n_pops, n_pops, ests.shape[1], ests.shape[-1]))
+    for i, j in it.product(range(n_pops), repeat=2):
+        if i == j:
+            out[i, j] = dec_dict["score"][i]
+        else:
+            out[i, j] = na.apply_estimators(ests[i], pops[j], targs, transpose=False)
+    return out
+
+
+def decode_strict_fixation(
+    data,
+    labels,
+    n,
+    tzf="choice_start",
+    n_folds=100,
+    test_prop=0.2,
+    fix_starts=None,
+    fix_ends=None,
+    regions=None,
+    **kwargs,
+):
+    if fix_starts is None:
+        fix_starts, _ = npav.get_nth_fixation(data, n, tzf=tzf)
+    if fix_ends is None:
+        fix_ends, _ = npav.get_nth_fixation(data, n + 1, start_or_end="start", tzf=tzf)
+
+    pops = data.get_bounded_firing_rates(fix_starts, fix_ends, regions=regions)
+    out_dicts = []
+    for i, pop in enumerate(pops):
+        out = na.fold_skl_shape(
+            pop,
+            np.array(labels[i]).astype(float),
+            n_folds,
+            test_prop=test_prop,
+            mean=False,
+            **kwargs,
+        )
+        out["X"] = pop
+        out["y"] = labels
+        out_dicts.append(out)
+    return out_dicts
+
+
+def get_fixation_pops(
+    data, ns, keys, combine_func=np.concatenate, tzf="choice_start", **kwargs
+):
+    pops_ns, starts, ends, ns_track = [], [], [], []
+    for n in ns:
+        fix_starts, xy_starts = npav.get_nth_fixation(data, n, tzf=tzf)
+        fix_ends, xy_ends = npav.get_nth_fixation(
+            data, n + 1, start_or_end="start", tzf=tzf
+        )
+        if n == -1:
+            fix_starts = data[tzf]
+            xy_starts = xy_ends
+
+        pops = data.get_bounded_firing_rates(fix_starts, fix_ends, **kwargs)
+        pops_ns.append(pops)
+        starts.append(xy_starts)
+        ends.append(xy_ends)
+        ns_track.append(list((n,) * len(x) for x in xy_starts))
+    info = data[list(keys)]
+    outs = []
+    for i, info_i in enumerate(info):
+        outs_i = []
+        for j, n in enumerate(ns):
+            out_ij = {
+                "pop": pops_ns[j][i],
+                "start_xy": starts[j][i],
+                "end_xy": ends[j][i],
+                "ns": ns_track[j][i],
+                "info": info_i,
+            }
+            outs_i.append(out_ij)
+        out_i = u.aggregate_dictionary(outs_i, combine_func=combine_func)
+        outs.append(out_i)
+    return outs
+
+
+def decode_strict_side_fixations(
+    data,
+    ns,
+    keys=("chose_right", "white_right"),
+    offset=0,
+    gap=0,
+    test_prop=0.2,
+    n_folds=100,
+    model=skm.LinearSVC,
+    **kwargs,
+):
+    reps = get_fixation_pops(data, ns, keys)
+    outs = []
+    for rep in reps:
+        out_r = {}
+        for j, k in enumerate(keys):
+            pop = rep["pop"]
+            targ = rep["info"][:, j].astype(int)
+            out_j = {}
+            for i, n in enumerate(ns):
+                fix = rep["ns"] == n
+                left = rep["start_xy"][:, 0] < offset + gap / 2
+                right = rep["start_xy"][:, 0] > offset + gap / 2
+                ls_mask = np.logical_and(fix, left)
+                rs_mask = np.logical_and(fix, right)
+
+                out_ji = na.fold_skl_shape(
+                    pop[rs_mask],
+                    targ[rs_mask],
+                    n_folds,
+                    mean=False,
+                    c_gen=pop[ls_mask],
+                    l_gen=targ[ls_mask],
+                    test_prop=test_prop,
+                    model=model,
+                    **kwargs,
+                )
+                out_j[n] = out_ji
+            out_r[k] = out_j
+        outs.append(out_r)
+    return outs
+
+
+def decode_side_fixation(
+    data,
+    labels,
+    n,
+    tzf="choice_start",
+    n_folds=100,
+    test_prop=0.2,
+    lr_thresh=0,
+    **kwargs,
+):
+    fix_starts, xy_starts = npav.get_nth_fixation(data, n, tzf=tzf)
+    fix_ends, xy_ends = npav.get_nth_fixation(
+        data, n + 1, start_or_end="start", tzf=tzf
+    )
+
+    pops = data.get_bounded_firing_rates(fix_starts, fix_ends)
+    out_dicts = []
+    for i, pop in enumerate(pops):
+        out = na.fold_skl_shape(
+            pop,
+            np.array(labels[i]).astype(float),
+            n_folds,
+            test_prop=test_prop,
+            mean=False,
+            **kwargs,
+        )
+        out["X"] = pop
+        out["y"] = labels
+        out_dicts.append(out)
+    return out_dicts
 
 
 def decode_pairs(
@@ -608,13 +878,13 @@ def _make_shifted_data_masks(shift, data, *masks):
         m_fwd = np.ones(len(trls), dtype=bool)
         m_fwd[:shift] = False
         fwd_mask.append(m_fwd)
-        
+
         m_bwd = np.ones(len(trls), dtype=bool)
         m_bwd[-shift:] = False
         for j, m_j in enumerate(masks):
             m_ij = m_j[i].to_numpy()
             new_masks[j].append(m_ij[m_bwd])
-        
+
     data_masked = data.mask(gio.ResultSequence(fwd_mask))
     new_masks = list(gio.ResultSequence(m) for m in new_masks)
     return data_masked, new_masks

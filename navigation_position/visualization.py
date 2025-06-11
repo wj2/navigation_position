@@ -3,10 +3,124 @@ import scipy.signal as sig
 import matplotlib.pyplot as plt
 import sklearn.manifold as skm
 import sklearn.decomposition as skd
+import sklearn.preprocessing as skp
 import itertools as it
 
 import general.utility as u
 import general.plotting as gpl
+
+
+def _get_fixation_sims(
+    pop,
+):
+    pop_zs = skp.StandardScaler().fit_transform(pop)
+    sims = pop_zs @ pop_zs.T
+    mask = np.identity(len(sims), dtype=bool)
+    sims[mask] = np.nan
+    return sims
+
+
+def _make_bins(ns, bin_min=None, bin_max=None, n_bins=10):
+    if bin_min is None:
+        bin_min = np.nanmin(ns)
+    if bin_max is None:
+        bin_max = np.nanmax(ns)
+    bins = np.linspace(bin_min, bin_max, n_bins)
+    bcs = bins[:-1] + np.diff(bins)[0] / 2
+    return bins, bcs
+
+
+def _make_kernel(ns, bins, sims, n_dims=1):
+    mask = ~np.isnan(sims)
+    ns = ns[mask]
+    sims = sims[mask]
+
+    ns_dims = ns.shape[1] if len(ns.shape) > 1 else 1
+    tr, _ = np.histogramdd(ns, bins=(bins,) * ns_dims, weights=sims)
+    count, _ = np.histogramdd(ns, bins=(bins,) * ns_dims)
+    normalized = tr / (count * n_dims)
+    return normalized
+
+
+def apply_row_col_masks(rm, cm, *mats):
+    ret = []
+    for mat in mats:
+        if rm is not None:
+            mat = mat[rm]
+        if cm is not None:
+            mat = mat[:, cm]
+        ret.append(mat)
+    return ret
+
+
+@gpl.ax_adder()
+def plot_fixation_kernel(
+    pop,
+    ns,
+    ax=None,
+    col_mask=None,
+    row_mask=None,
+    bin_min=None,
+    bin_max=None,
+    n_bins=10,
+):
+    sims = _get_fixation_sims(pop)
+    ns_mat = ns[None] - ns[:, None]
+    ns_mat, sims = apply_row_col_masks(row_mask, col_mask, ns_mat, sims)
+    bins, bcs = _make_bins(ns_mat, bin_min=bin_min, bin_max=bin_max, n_bins=n_bins)
+    ns_flat = ns_mat.flatten()
+    sims_flat = sims.flatten()
+    trace_norm = _make_kernel(ns_flat, bins, sims_flat, n_dims=pop.shape[1])
+
+    ax.plot(bcs, trace_norm, "-o")
+    ax.set_ylabel("similarity (au)")
+    ax.set_xlabel("fixation difference")
+    gpl.clean_plot(ax, 0)
+
+
+@gpl.ax_adder()
+def plot_fixation_sims(
+    pop,
+    ns,
+    ax=None,
+    bin_min=None,
+    bin_max=None,
+    col_mask=None,
+    row_mask=None,
+    n_bins=10,
+    cmap="bwr",
+):
+    sims = _get_fixation_sims(pop)
+    ns1, ns2 = np.meshgrid(ns, ns)
+    bins, bcs = _make_bins(ns1, bin_min=bin_min, bin_max=bin_max, n_bins=n_bins)
+
+    sims, ns1, ns2 = apply_row_col_masks(row_mask, col_mask, sims, ns1, ns2)
+    ns_use = np.stack((ns1.flatten(), ns2.flatten()), axis=1)
+    kernel = _make_kernel(ns_use, bins, sims.flatten(), n_dims=pop.shape[1])
+    m = gpl.pcolormesh(bcs, bcs, kernel, ax=ax, cmap=cmap, symmetric_colors=True)
+    plt.colorbar(m, ax=ax, label="similarity (au)")
+    ax.set_xlabel("fixation")
+    ax.set_ylabel("fixation")
+    ax.set_aspect("equal")
+
+
+def visualize_strict_side_fixations(
+    res,
+    axs=None,
+    fwid=3,
+    pkeys=("score", "score_gen"),
+):
+    if axs is None:
+        f, axs = plt.subplots(
+            len(res), 1, figsize=(fwid, fwid * len(res)), sharey=True, sharex=True
+        )
+    for i, (k, res_k) in enumerate(res.items()):
+        for pk in pkeys:
+            ys = np.concatenate(list(x[pk] for x in res_k.values()), axis=-1)
+            xs = list(res_k.keys())
+            gpl.plot_trace_werr(xs, ys, confstd=True, ax=axs[i], label=pk)
+        axs[i].set_title(k)
+        gpl.add_hlines(0.5, axs[i])
 
 
 def plot_distance_distribs(conds, rdm, axs=None, fwid=3, colors=None, **kwargs):
@@ -32,6 +146,22 @@ def plot_distance_distribs(conds, rdm, axs=None, fwid=3, colors=None, **kwargs):
         gpl.plot_trace_werr(np.expand_dims(mus, 1), [-10], ax=axs[i])
         gpl.clean_plot(ax, i)
         gpl.add_vlines(0, ax)
+
+
+@gpl.ax_adder()
+def plot_dec_fix_seq(dec, ax=None, **kwargs):
+    xs = np.arange(dec.shape[0])
+    gpl.plot_trace_werr(
+        xs,
+        np.squeeze(dec).T,
+        confstd=True,
+        fill=False,
+        ax=ax,
+        **kwargs,
+    )
+    ax.set_xticks(xs)
+    ax.set_xticklabels(["initial"] + list("fix {}".format(x) for x in xs[1:]))
+    gpl.add_hlines(0.5, ax)
 
 
 @gpl.ax_adder()
@@ -277,13 +407,13 @@ def plot_pairwise_decoding_results(
     sig_thr=0,
     axs=None,
     arr_len=8,
-    wid_range=(.5, 4),
+    wid_range=(0.5, 4),
     fwid=5,
     error_shading=False,
     tzf="choice_start",
     grey_col=(0.8,) * 3,
     ind2_color="r",
-    eps=.01,
+    eps=0.01,
 ):
     if axs is None:
         f, axs = plt.subplots(1, 2, figsize=(2 * fwid, fwid))
@@ -320,7 +450,7 @@ def plot_pairwise_decoding_results(
                     max_decs.append(np.max(np.nanmean(dec_all[i, j], axis=0)))
                 if low:
                     max_decs.append(np.min(np.nanmean(dec_all[i, j], axis=0)))
-                    
+
                 to_plot.append((xs, dec_all[i, j], np.stack((ci, cj), axis=1)))
 
     colors = plt.get_cmap("magma")(np.linspace(0, 1, len(to_plot) + 1)[:-1])
@@ -342,7 +472,6 @@ def plot_pairwise_decoding_results(
     gpl.clean_plot(ax1, 1)
     gpl.clean_plot_bottom(ax1)
     gpl.add_hlines(0.5, ax)
-    
 
 
 @gpl.ax_adder()

@@ -11,6 +11,7 @@ import general.data_io as gio
 BASEFOLDER = "../data/navigation_position/"
 FIGFOLDER = "navigation_position/figs/"
 session_template = "(?P<animal>[a-zA-Z]+)_(?P<date>[0-9]+)"
+dated_session_template = "(?P<animal>[a-zA-Z]+)_(?P<date>{date})"
 
 
 def load_sessions(
@@ -25,6 +26,22 @@ def load_sessions(
     if uninstructed_only:
         data_use = mask_uninstructed_trials(data_use)
     return data_use
+
+
+def get_date_list(folder=BASEFOLDER, template=session_template):
+    gen = u.folder_regex_generator(folder, template)
+    dates = []
+    for _, f_info in gen:
+        dates.append(f_info["date"])
+    return dates
+
+
+def load_dated_session(
+    date, dated_session_template=dated_session_template, **kwargs,
+):
+    use_template = dated_session_template.format(date=date)
+    data = load_sessions(session_template=use_template, **kwargs)
+    return data
 
 
 def load_session_files(
@@ -108,7 +125,8 @@ info_rename_dict = {
 }
 
 
-saccade_timing = "SaccadeStruct.StartTime"
+saccade_start_time = "SaccadeStruct.StartTime"
+saccade_end_time = "SaccadeStruct.EndTime"
 saccade_starts = ("SaccadeStruct.StartPointX", "SaccadeStruct.StartPointY")
 saccade_ends = ("SaccadeStruct.EndPointX", "SaccadeStruct.EndPointY")
 
@@ -118,38 +136,54 @@ def get_saccade_info(
     tzf=None,
     tbeg=0,
     tend=None,
-    saccade_timing=saccade_timing,
+    saccade_start_time=saccade_start_time,
+    saccade_end_time=saccade_end_time,
     saccade_starts=saccade_starts,
     saccade_ends=saccade_ends,
+    sub_tzf=True,
 ):
     out_start = []
     out_end = []
-    out_times = []
+    out_start_times = []
+    out_end_times = []
     if tzf is not None:
         tzs = data[tzf]
-    saccade_times = data[saccade_timing]
+    saccade_start_times = data[saccade_start_time]
+    saccade_end_times = data[saccade_end_time]
     starts = data[list(saccade_starts)]
     ends = data[list(saccade_ends)]
     if tend is None:
         tend = np.inf
-    for i, st_i in enumerate(saccade_times):
+    for i, st_i in enumerate(saccade_start_times):
         ends_i = []
         starts_i = []
-        times_i = []
+        start_times_i = []
+        end_times_i = []
         for j, st_ij in enumerate(st_i):
             st_ij = np.array(st_ij)
+            et_ij = np.array(saccade_end_times[i].iloc[j])
             if tzf is not None:
-                st_ij = st_ij - tzs[i].iloc[j]
-            t_mask = np.logical_and(st_ij >= tbeg, st_ij < tend)
-            times_i.append(st_ij[t_mask])
+                st_ij_mask = st_ij - tzs[i].iloc[j]
+                et_ij_mask = et_ij - tzs[i].iloc[j]
+            if sub_tzf:
+                st_ij_use = st_ij_mask
+                et_ij_use = et_ij_mask
+            else:
+                st_ij_use = st_ij
+                et_ij_use = et_ij
+            t_mask = np.logical_and(st_ij_mask >= tbeg, st_ij_mask < tend)
+            start_times_i.append(st_ij_use[t_mask])
+            end_times_i.append(et_ij_use[t_mask])
+
             s = np.stack(starts[i].iloc[j].to_numpy(), axis=1)
             starts_i.append(s[t_mask])
             e = np.stack(ends[i].iloc[j].to_numpy(), axis=1)
             ends_i.append(e[t_mask])
         out_start.append(starts_i)
         out_end.append(ends_i)
-        out_times.append(times_i)
-    return out_times, out_start, out_end
+        out_start_times.append(start_times_i)
+        out_end_times.append(end_times_i)
+    return out_start_times, out_end_times, out_start, out_end
             
 
 def combine_temporal_keys(data, keys, filt_func=None, tzf=None, tbeg=0, tend=None):
