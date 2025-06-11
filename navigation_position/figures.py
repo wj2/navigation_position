@@ -176,7 +176,7 @@ class FixationAnalysis(NavigationFigure):
         return self.load_date_data(self.date)
 
     def _make_full_key(self, key):
-        return key, self.fixations, self.dec_keys, self.regions
+        return (key, self.fixations, self.dec_keys, self.regions)
 
     def panel_fixations(self):
         key = "panel_fixations"
