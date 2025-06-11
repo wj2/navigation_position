@@ -43,6 +43,7 @@ general = [
 [project.scripts]
 np_decoding = "navigation_position.decoding_script:main"
 np_change = "navigation_position.change_script:main"
+np_fixation = "navigation_position.fixation_script:main"
 
 [tool.hatch.metadata]
 allow-direct-references = true
