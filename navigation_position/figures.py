@@ -176,7 +176,7 @@ class FixationAnalysis(NavigationFigure):
         return self.load_date_data(self.date)
 
     def _make_full_key(self, key):
-        return (key, self.fixations, self.dec_keys, self.regions)
+        return (key, tuple(self.fixations), tuple(self.dec_keys), tuple(self.regions))
 
     def panel_fixations(self):
         key = "panel_fixations"
@@ -204,7 +204,7 @@ class FixationAnalysis(NavigationFigure):
                 axs[i].scatter(*prev.T, s=1, color=colors[i - 1], alpha=0.5)
                 comb = np.stack((prev.T, xy_i.T), axis=1)
                 axs[i].plot(*comb, color=colors[i - 1], alpha=0.5, lw=0.1, zorder=-1)
-                
+
                 xy1 = np.nanmedian(prev, axis=0).T
                 xy2 = np.nanmedian(xy_i, axis=0).T
                 axs[i].plot(*xy2, "o", color="k")

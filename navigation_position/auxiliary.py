@@ -14,6 +14,9 @@ session_template = "(?P<animal>[a-zA-Z]+)_(?P<date>[0-9]+)"
 dated_session_template = "(?P<animal>[a-zA-Z]+)_(?P<date>{date})"
 
 
+REGIONLIST = (None, ("DLPFCv", "DLPFCd"), ("HPC",), ("PMd",))
+
+
 def load_sessions(
     folder=BASEFOLDER, correct_only=False, uninstructed_only=True, **kwargs
 ):
