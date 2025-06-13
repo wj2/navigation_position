@@ -117,7 +117,7 @@ class FixationAnalysis(NavigationFigure):
         self,
         date,
         fig_key="fixation_fig",
-        dec_keys=("chose_right", "white_right"),
+        dec_keys=("chose_right", "white_right", "pink_right"),
         regions=None,
         fixations=(-1, 0, 1, 2),
         **kwargs,

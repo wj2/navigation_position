@@ -259,7 +259,8 @@ def generalize_strict_fixation(dec_dict, targs):
         if i == j:
             out[i, j] = dec_dict["score"][i]
         else:
-            out[i, j] = na.apply_estimators(ests[i], pops[j], targs, transpose=False)
+            pops_j, targs_j = u.filter_nan(pops[j], targs)
+            out[i, j] = na.apply_estimators(ests[i], pops_j, targs_j, transpose=False)
     return out
 
 
@@ -283,10 +284,11 @@ def decode_strict_fixation(
     pops = data.get_bounded_firing_rates(fix_starts, fix_ends, regions=regions)
     out_dicts = []
     for i, pop in enumerate(pops):
-        print(np.array(labels[i]).astype(float))
+        labels_i = np.array(labels[i]).astype(float)
+        pop_i, labels_i = u.filter_nan(pop, labels_i)
         out = na.fold_skl_shape(
-            pop,
-            np.array(labels[i]).astype(float),
+            pop_i,
+            labels_i,
             n_folds,
             test_prop=test_prop,
             mean=False,
