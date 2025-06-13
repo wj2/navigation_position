@@ -283,6 +283,7 @@ def decode_strict_fixation(
     pops = data.get_bounded_firing_rates(fix_starts, fix_ends, regions=regions)
     out_dicts = []
     for i, pop in enumerate(pops):
+        print(np.array(labels[i]).astype(float))
         out = na.fold_skl_shape(
             pop,
             np.array(labels[i]).astype(float),
