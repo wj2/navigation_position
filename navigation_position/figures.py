@@ -237,22 +237,31 @@ class FixationAnalysis(NavigationFigure):
             data = self.get_uninstructed_data()
             out = {}
             for k in self.dec_keys:
-                dec_k = npra.decode_strict_fixation_seq(
-                    data,
-                    data[k],
-                    model=skm.LinearSVC,
-                    n=len(self.fixations) - 1,
-                    regions=self.regions,
-                )
-                gen_k = npra.generalize_strict_fixation(
-                    dec_k[0],
-                    data[k][0].to_numpy().astype(float),
-                )
-                out[k] = dec_k, gen_k
+                if np.sum(data[k].rs_isnan().rs_not()[0]) > 0:
+                    dec_k = npra.decode_strict_fixation_seq(
+                        data,
+                        data[k],
+                        model=skm.LinearSVC,
+                        n=len(self.fixations) - 1,
+                        regions=self.regions,
+                    )
+                    gen_k = npra.generalize_strict_fixation(
+                        dec_k[0],
+                        data[k][0].to_numpy().astype(float),
+                    )
+                    out[k] = dec_k, gen_k
+                else:
+                    out[k] = None, None
             self.data[full_key] = out
 
         res = self.data[full_key]
-        vmax = np.max(list(np.max(np.mean(x[1], axis=(-1, -2))) for x in res.values()))
+        vmax = np.max(
+            list(
+                np.max(np.mean(x[1], axis=(-1, -2)))
+                for x in res.values()
+                if x[0] is not None
+            )
+        )
         if self.regions is None:
             rs = ("all regions",)
         else:
@@ -260,15 +269,16 @@ class FixationAnalysis(NavigationFigure):
         ax.set_xlabel("-".join(rs))
         for i, k in enumerate(self.dec_keys):
             dec, gen = res[k]
-            npv.plot_dec_fix_seq(dec[0]["score"], ax=ax, label=k)
-            ax.set_ylabel("decoding performance")
-            m = gpl.pcolormesh(
-                np.mean(gen, axis=(-1, -2)),
-                cmap="Blues",
-                vmin=0.5,
-                vmax=vmax,
-                ax=axs_gen[i],
-            )
+            if dec is not None:
+                npv.plot_dec_fix_seq(dec[0]["score"], ax=ax, label=k)
+                ax.set_ylabel("decoding performance")
+                m = gpl.pcolormesh(
+                    np.mean(gen, axis=(-1, -2)),
+                    cmap="Blues",
+                    vmin=0.5,
+                    vmax=vmax,
+                    ax=axs_gen[i],
+                )
             axs_gen[i].set_ylabel("trained saccade")
             axs_gen[i].set_xlabel("tested saccade")
             axs_gen[i].set_aspect("equal")
