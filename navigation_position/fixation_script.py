@@ -40,11 +40,14 @@ def main():
     parser = create_parser()
     args = parser.parse_args()
 
-    use_date = npa.get_date_list()[args.use_ind]
+    if args.use_ind is not None:
+        use_date = npa.get_date_list()[args.use_ind]
+    else:
+        use_date = None
     args.date = datetime.now()
 
     fig = npf.FixationAnalysis(
-        use_date, regions=args.regions,
+        date=use_date, regions=args.regions,
     )
     fig.panel_fixations()
     fig.panel_dec()
