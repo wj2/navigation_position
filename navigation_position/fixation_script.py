@@ -49,9 +49,11 @@ def main():
     fig.panel_fixations()
     fig.panel_dec()
 
+    if regions is None:
+        regions = ("all",)
     fn = args.output_template.format(
         region="-".join(args.regions),
         date=use_date,
         jobid=args.jobid,
     )
-    fig.save(fn, use_bf=args.output_folder)
+    fig.save(fn + ".pdf", use_bf=args.output_folder)
