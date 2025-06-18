@@ -54,7 +54,7 @@ def main():
     else:
         regions = args.regions
     fn = args.output_template.format(
-        region="-".join(args.regions),
+        region="-".join(regions),
         date=use_date,
         jobid=args.jobid,
     )
