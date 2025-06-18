@@ -48,6 +48,7 @@ def main():
     )
     fig.panel_fixations()
     fig.panel_dec()
+    fig.panel_cross_fixation()
 
     if args.regions is None:
         regions = ("all",)

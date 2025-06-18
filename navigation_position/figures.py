@@ -181,12 +181,12 @@ class FixationAnalysis(NavigationFigure):
             self.gs,
             1,
             n_plots,
-            70,
+            80,
             100,
             0,
             100,
             4,
-            20,
+            3,
         )
         cf_axs = self.get_axs(cf_grid, sharex="all", sharey="all", squeeze=True)
         gss["panel_cross_fixation"] = cf_axs
