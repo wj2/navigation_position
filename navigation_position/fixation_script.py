@@ -49,8 +49,10 @@ def main():
     fig.panel_fixations()
     fig.panel_dec()
 
-    if regions is None:
+    if args.regions is None:
         regions = ("all",)
+    else:
+        regions = args.regions
     fn = args.output_template.format(
         region="-".join(args.regions),
         date=use_date,
