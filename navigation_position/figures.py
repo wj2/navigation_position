@@ -20,7 +20,7 @@ class NavigationFigure(pu.Figure):
             data_full = npa.load_sessions()
             self.data["exper_data"] = data_full
         return self.data["exper_data"]
-        
+
     def load_date_data(self, date):
         if self.data.get("exper_data") is None:
             data_full = npa.load_dated_session(date)
@@ -252,44 +252,45 @@ class FixationAnalysis(NavigationFigure):
             gpl.make_xaxis_scale_bar(ax, magnitude=5)
             gpl.make_yaxis_scale_bar(ax, magnitude=5)
 
+    def get_color_feature_dict(self):
+        features = ("white_right", "pink_right", "chose_right")
+        return {f: self.params.getcolor("{}_color".format(f)) for f in features}
+
     def panel_dec(self, recompute=False):
         key = "panel_dec"
         ax, axs_gen = self.gss[key]
+        colors = self.get_color_feature_dict()
 
         full_key = self._make_full_key(key)
         if self.data.get(full_key) is None or recompute:
             data = self.get_uninstructed_data()
             out = {}
             for k in self.dec_keys:
-                if np.sum(data[k].rs_isnan().rs_not()[0]) > 0:
-                    print(np.sum(data[k].rs_isnan().rs_not()[0]))
-                    dec_k = npra.decode_strict_fixation_seq(
-                        data,
-                        data[k],
-                        model=skm.LinearSVC,
-                        n=len(self.fixations) - 1,
-                        regions=self.regions,
-                    )
-                    gen_ks = []
-                    for i, dec_ki in enumerate(dec_k):
-                        gen_ki = npra.generalize_strict_fixation(
-                            dec_ki,
-                            data[k][i].to_numpy().astype(float),
-                        )
-                        gen_ks.append(gen_ki)
-                    out[k] = dec_k, gen_ks
-                else:
-                    out[k] = None, None
+                dec_k = npra.decode_strict_fixation_seq(
+                    data,
+                    data[k],
+                    model=skm.LinearSVC,
+                    n=len(self.fixations) - 1,
+                    regions=self.regions,
+                )
+                gen_k = npra.generalize_strict_fixation_pops(
+                    dec_k,
+                    data[k],
+                )
+                out[k] = dec_k, gen_k
             self.data[full_key] = out
 
         res = self.data[full_key]
-        vmax = np.max(
-            list(
-                np.max(np.mean(x[1], axis=(-1, -2)))
-                for x in res.values()
-                if x[0] is not None
+        maxes = []
+        for _, res_k in res.values():
+            vmax_k = np.max(
+                np.mean(
+                    np.stack(list(i for i in res_k if i is not None), axis=0),
+                    axis=(0, -1, -2),
+                )
             )
-        )
+            maxes.append(vmax_k)
+        vmax = np.max(maxes)
         if self.regions is None:
             rs = ("all regions",)
         else:
@@ -297,20 +298,30 @@ class FixationAnalysis(NavigationFigure):
         ax.set_xlabel("-".join(rs))
         for i, k in enumerate(self.dec_keys):
             dec, gen = res[k]
-            if dec is not None:
-                gens = []
-                for j, dec_j in enumerate(dec):
-                    npv.plot_dec_fix_seq(dec_j["score"], ax=ax, label=k)
+            gens = []
+            for j, dec_j in enumerate(dec):
+                if dec_j is not None:
+                    if len(gens) == 0:
+                        label = k
+                    else:
+                        label = ""
+                    npv.plot_dec_fix_seq(
+                        dec_j["score"],
+                        ax=ax,
+                        label=label,
+                        color=colors[k],
+                    )
                     gens.append(gen[j])
-                gen_plot = np.mean(np.stack(gens, axis=0), axis=(0, -1, -2))
-                ax.set_ylabel("decoding performance")
-                m = gpl.pcolormesh(
-                    gen_plot,
-                    cmap="Blues",
-                    vmin=0.5,
-                    vmax=vmax,
-                    ax=axs_gen[i],
-                )
+
+            gen_plot = np.mean(np.stack(gens, axis=0), axis=(0, -1, -2))
+            ax.set_ylabel("decoding performance")
+            m = gpl.pcolormesh(
+                gen_plot,
+                cmap="Blues",
+                vmin=0.5,
+                vmax=vmax,
+                ax=axs_gen[i],
+            )
             axs_gen[i].set_ylabel("trained saccade")
             axs_gen[i].set_xlabel("tested saccade")
             axs_gen[i].set_aspect("equal")
@@ -328,10 +339,20 @@ class FixationAnalysis(NavigationFigure):
             self.data[key] = out
         out = self.data[key]
 
-        for res_i in out:
-            npv.visualize_strict_side_fixations(res_i, axs=axs)
+        dec_color = self.params.getcolor("dec_color")
+        gen_color = self.params.getcolor("gen_color")
+
+        for i, res_i in enumerate(out):
+            npv.visualize_strict_side_fixations(
+                res_i,
+                axs=axs,
+                colors=(dec_color, gen_color),
+                add_label=i == 0,
+                fill=False,
+            )
         for i, ax in enumerate(axs):
             ax.set_xlabel("fixation number")
             ax.set_title(self.dec_keys[i])
-            ax.set_ylabel("decoding performance")
+            if i == 0:
+                ax.set_ylabel("decoding performance")
             gpl.clean_plot(ax, i)

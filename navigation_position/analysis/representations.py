@@ -5,7 +5,7 @@ import sklearn.metrics.pairwise as skmp
 import sklearn.svm as skm
 import imblearn.under_sampling as imb_us
 import itertools as it
-import pandas as  pd
+import pandas as pd
 
 import rsatoolbox as rsa
 import general.neural_analysis as na
@@ -229,6 +229,12 @@ def decode_masks_fix_seq(
     return out
 
 
+def decode_view_info(
+    data, ns=(-1, 0, 1, 2), info=("chose_right", "white_right", "pink_right"), **kwargs
+):
+    pass
+
+
 def decode_strict_fixation_seq(
     data, labels, n=2, initial_winsize=200, tzf="choice_start", **kwargs
 ):
@@ -242,13 +248,30 @@ def decode_strict_fixation_seq(
         tzf=tzf,
         **kwargs,
     )
-    out_dicts = list([] for _ in initial)
-    list(out_dicts[i].append(x) for i, x in enumerate(initial))
+    out_dicts = list([x] for x in initial)
 
     for i in range(n):
         out_i = decode_strict_fixation(data, labels, i, tzf=tzf, **kwargs)
-        list(out_dicts[j].append(x) for j, x in enumerate(out_i))
-    return list(u.aggregate_dictionary(od) for od in out_dicts)
+        list(out_dicts[j].append(x) for j, x in enumerate(out_i) if x is not None)
+    out = []
+    for od in out_dicts:
+        if od[0] is None:
+            out.append(None)
+        else:
+            out.append(u.aggregate_dictionary(od))
+    return out
+
+
+def generalize_strict_fixation_pops(decs, targs):
+    outs = []
+    for i, dec in enumerate(decs):
+        if dec is None:
+            out = None
+        else:
+            targ_i = targs[i].to_numpy().astype(float)
+            out = generalize_strict_fixation(dec, targ_i)
+        outs.append(out)
+    return outs
 
 
 def generalize_strict_fixation(dec_dict, targs):
@@ -287,17 +310,19 @@ def decode_strict_fixation(
     for i, pop in enumerate(pops):
         labels_i = np.array(labels[i]).astype(float)
         pop_i, labels_i_filt = u.filter_nan(pop, labels_i)
-        print(pop_i.shape, labels_i_filt.shape)
-        out = na.fold_skl_shape(
-            pop_i,
-            labels_i_filt,
-            n_folds,
-            test_prop=test_prop,
-            mean=False,
-            **kwargs,
-        )
-        out["X"] = pop
-        out["y"] = labels_i
+        if np.prod(pop_i.shape) > 0:
+            out = na.fold_skl_shape(
+                pop_i,
+                labels_i_filt,
+                n_folds,
+                test_prop=test_prop,
+                mean=False,
+                **kwargs,
+            )
+            out["X"] = pop
+            out["y"] = labels_i
+        else:
+            out = None
         out_dicts.append(out)
     return out_dicts
 
@@ -361,9 +386,9 @@ def decode_strict_side_fixations(
             if len(pop) > 0:
                 out_j = {}
                 for i, n in enumerate(ns):
-                    fix = rep["ns"] == n
-                    left = rep["start_xy"][:, 0] < offset + gap / 2
-                    right = rep["start_xy"][:, 0] > offset + gap / 2
+                    fix = rep["ns"][mask] == n
+                    left = rep["start_xy"][mask][:, 0] < offset + gap / 2
+                    right = rep["start_xy"][mask][:, 0] > offset + gap / 2
                     ls_mask = np.logical_and(fix, left)
                     rs_mask = np.logical_and(fix, right)
 
@@ -550,8 +575,8 @@ def format_conjunctions_for_decoding(pop_dict, sess_ind):
     pops = []
     label_dict = {}
     cond_num = 0
-    for i, (k, pd) in enumerate(pop_dict.items()):
-        pd_sess = list(x[sess_ind] for x in pd)
+    for i, (k, pd_) in enumerate(pop_dict.items()):
+        pd_sess = list(x[sess_ind] for x in pd_)
         for j, pd_ij in enumerate(pd_sess):
             n_trls = pd_ij.shape[2]
             labels.extend((cond_num,) * n_trls)

@@ -109,16 +109,27 @@ def visualize_strict_side_fixations(
     axs=None,
     fwid=3,
     pkeys=("score", "score_gen"),
+    colors=None,
+    add_label=True,
+    **kwargs,
 ):
+    if colors is None:
+        colors = (None,) * len(pkeys)
     if axs is None:
         f, axs = plt.subplots(
             len(res), 1, figsize=(fwid, fwid * len(res)), sharey=True, sharex=True
         )
     for i, (k, res_k) in enumerate(res.items()):
-        for pk in pkeys:
+        for j, pk in enumerate(pkeys):
             ys = np.concatenate(list(x[pk] for x in res_k.values()), axis=-1)
             xs = list(res_k.keys())
-            gpl.plot_trace_werr(xs, ys, confstd=True, ax=axs[i], label=pk)
+            if add_label:
+                label = pk
+            else:
+                label = ""
+            gpl.plot_trace_werr(
+                xs, ys, confstd=True, ax=axs[i], label=label, color=colors[j], **kwargs,
+            )
         axs[i].set_title(k)
         gpl.add_hlines(0.5, axs[i])
 
