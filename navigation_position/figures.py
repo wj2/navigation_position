@@ -283,12 +283,15 @@ class FixationAnalysis(NavigationFigure):
         res = self.data[full_key]
         maxes = []
         for _, res_k in res.values():
-            vmax_k = np.max(
-                np.mean(
-                    np.stack(list(i for i in res_k if i is not None), axis=0),
-                    axis=(0, -1, -2),
+            try: 
+                vmax_k = np.max(
+                    np.mean(
+                        np.stack(list(i for i in res_k if i is not None), axis=0),
+                        axis=(0, -1, -2),
+                    )
                 )
-            )
+            except ValueError:
+                vmax_k = .5
             maxes.append(vmax_k)
         vmax = np.max(maxes)
         if self.regions is None:
