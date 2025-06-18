@@ -372,9 +372,10 @@ def decode_strict_side_fixations(
     test_prop=0.2,
     n_folds=100,
     model=skm.LinearSVC,
+    regions=None,
     **kwargs,
 ):
-    reps = get_fixation_pops(data, ns, keys)
+    reps = get_fixation_pops(data, ns, keys, regions=regions,)
     outs = []
     for rep in reps:
         out_r = {}

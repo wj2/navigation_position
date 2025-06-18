@@ -337,7 +337,7 @@ class FixationAnalysis(NavigationFigure):
         if self.data.get(key) is None:
             data = self.get_uninstructed_data()
             out = npra.decode_strict_side_fixations(
-                data, self.fixations, keys=self.dec_keys
+                data, self.fixations, keys=self.dec_keys, regions=self.regions,
             )
             self.data[key] = out
         out = self.data[key]
