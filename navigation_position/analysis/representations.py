@@ -5,6 +5,7 @@ import sklearn.metrics.pairwise as skmp
 import sklearn.svm as skm
 import imblearn.under_sampling as imb_us
 import itertools as it
+import pandas as  pd
 
 import rsatoolbox as rsa
 import general.neural_analysis as na
@@ -285,17 +286,18 @@ def decode_strict_fixation(
     out_dicts = []
     for i, pop in enumerate(pops):
         labels_i = np.array(labels[i]).astype(float)
-        pop_i, labels_i = u.filter_nan(pop, labels_i)
+        pop_i, labels_i_filt = u.filter_nan(pop, labels_i)
+        print(pop_i.shape, labels_i_filt.shape)
         out = na.fold_skl_shape(
             pop_i,
-            labels_i,
+            labels_i_filt,
             n_folds,
             test_prop=test_prop,
             mean=False,
             **kwargs,
         )
         out["X"] = pop
-        out["y"] = labels
+        out["y"] = labels_i
         out_dicts.append(out)
     return out_dicts
 
@@ -352,29 +354,32 @@ def decode_strict_side_fixations(
     for rep in reps:
         out_r = {}
         for j, k in enumerate(keys):
-            pop = rep["pop"]
-            targ = rep["info"][:, j].astype(int)
-            out_j = {}
-            for i, n in enumerate(ns):
-                fix = rep["ns"] == n
-                left = rep["start_xy"][:, 0] < offset + gap / 2
-                right = rep["start_xy"][:, 0] > offset + gap / 2
-                ls_mask = np.logical_and(fix, left)
-                rs_mask = np.logical_and(fix, right)
+            targ = rep["info"][:, j]
+            mask = np.logical_not(pd.isna(targ))
+            pop = rep["pop"][mask]
+            targ = targ[mask].astype(int)
+            if len(pop) > 0:
+                out_j = {}
+                for i, n in enumerate(ns):
+                    fix = rep["ns"] == n
+                    left = rep["start_xy"][:, 0] < offset + gap / 2
+                    right = rep["start_xy"][:, 0] > offset + gap / 2
+                    ls_mask = np.logical_and(fix, left)
+                    rs_mask = np.logical_and(fix, right)
 
-                out_ji = na.fold_skl_shape(
-                    pop[rs_mask],
-                    targ[rs_mask],
-                    n_folds,
-                    mean=False,
-                    c_gen=pop[ls_mask],
-                    l_gen=targ[ls_mask],
-                    test_prop=test_prop,
-                    model=model,
-                    **kwargs,
-                )
-                out_j[n] = out_ji
-            out_r[k] = out_j
+                    out_ji = na.fold_skl_shape(
+                        pop[rs_mask],
+                        targ[rs_mask],
+                        n_folds,
+                        mean=False,
+                        c_gen=pop[ls_mask],
+                        l_gen=targ[ls_mask],
+                        test_prop=test_prop,
+                        model=model,
+                        **kwargs,
+                    )
+                    out_j[n] = out_ji
+                out_r[k] = out_j
         outs.append(out_r)
     return outs
 

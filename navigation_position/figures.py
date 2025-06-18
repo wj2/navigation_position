@@ -15,6 +15,12 @@ config_path = "navigation_position/navigation_position/figures.conf"
 
 
 class NavigationFigure(pu.Figure):
+    def load_all_data(self):
+        if self.data.get("exper_data") is None:
+            data_full = npa.load_sessions()
+            self.data["exper_data"] = data_full
+        return self.data["exper_data"]
+        
     def load_date_data(self, date):
         if self.data.get("exper_data") is None:
             data_full = npa.load_dated_session(date)
@@ -115,7 +121,7 @@ class ViewFigure(pu.Figure):
 class FixationAnalysis(NavigationFigure):
     def __init__(
         self,
-        date,
+        date=None,
         fig_key="fixation_fig",
         dec_keys=("chose_right", "white_right", "pink_right"),
         regions=None,
@@ -125,7 +131,7 @@ class FixationAnalysis(NavigationFigure):
         cf = u.ConfigParserColor()
         cf.read(config_path)
         params = cf[fig_key]
-        fsize = (5, 8)
+        fsize = (5, 12)
 
         self.params = params
         self.date = date
@@ -143,7 +149,7 @@ class FixationAnalysis(NavigationFigure):
             1,
             n_axs,
             0,
-            30,
+            20,
             0,
             100,
             2,
@@ -155,13 +161,13 @@ class FixationAnalysis(NavigationFigure):
 
         n_plots = len(self.dec_keys)
 
-        dec_ax = self.get_axs((self.gs[35:60, 20:80],), squeeze=False)[0, 0]
+        dec_ax = self.get_axs((self.gs[25:45, 20:80],), squeeze=False)[0, 0]
         gen_grid = pu.make_mxn_gridspec(
             self.gs,
             1,
             n_plots,
+            45,
             65,
-            100,
             0,
             100,
             4,
@@ -170,10 +176,28 @@ class FixationAnalysis(NavigationFigure):
         gen_axs = self.get_axs(gen_grid, sharex="all", sharey="all", squeeze=True)
 
         gss["panel_dec"] = dec_ax, gen_axs
+
+        cf_grid = pu.make_mxn_gridspec(
+            self.gs,
+            1,
+            n_plots,
+            70,
+            100,
+            0,
+            100,
+            4,
+            20,
+        )
+        cf_axs = self.get_axs(cf_grid, sharex="all", sharey="all", squeeze=True)
+        gss["panel_cross_fixation"] = cf_axs
         self.gss = gss
 
     def get_exper_data(self):
-        return self.load_date_data(self.date)
+        if self.date is not None:
+            data = self.load_date_data(self.date)
+        else:
+            data = self.load_all_data()
+        return data
 
     def _make_full_key(self, key):
         return (
@@ -238,6 +262,7 @@ class FixationAnalysis(NavigationFigure):
             out = {}
             for k in self.dec_keys:
                 if np.sum(data[k].rs_isnan().rs_not()[0]) > 0:
+                    print(np.sum(data[k].rs_isnan().rs_not()[0]))
                     dec_k = npra.decode_strict_fixation_seq(
                         data,
                         data[k],
@@ -245,11 +270,14 @@ class FixationAnalysis(NavigationFigure):
                         n=len(self.fixations) - 1,
                         regions=self.regions,
                     )
-                    gen_k = npra.generalize_strict_fixation(
-                        dec_k[0],
-                        data[k][0].to_numpy().astype(float),
-                    )
-                    out[k] = dec_k, gen_k
+                    gen_ks = []
+                    for i, dec_ki in enumerate(dec_k):
+                        gen_ki = npra.generalize_strict_fixation(
+                            dec_ki,
+                            data[k][i].to_numpy().astype(float),
+                        )
+                        gen_ks.append(gen_ki)
+                    out[k] = dec_k, gen_ks
                 else:
                     out[k] = None, None
             self.data[full_key] = out
@@ -270,10 +298,14 @@ class FixationAnalysis(NavigationFigure):
         for i, k in enumerate(self.dec_keys):
             dec, gen = res[k]
             if dec is not None:
-                npv.plot_dec_fix_seq(dec[0]["score"], ax=ax, label=k)
+                gens = []
+                for j, dec_j in enumerate(dec):
+                    npv.plot_dec_fix_seq(dec_j["score"], ax=ax, label=k)
+                    gens.append(gen[j])
+                gen_plot = np.mean(np.stack(gens, axis=0), axis=(0, -1, -2))
                 ax.set_ylabel("decoding performance")
                 m = gpl.pcolormesh(
-                    np.mean(gen, axis=(-1, -2)),
+                    gen_plot,
                     cmap="Blues",
                     vmin=0.5,
                     vmax=vmax,
@@ -283,3 +315,23 @@ class FixationAnalysis(NavigationFigure):
             axs_gen[i].set_xlabel("tested saccade")
             axs_gen[i].set_aspect("equal")
         plt.colorbar(m, ax=axs_gen, label="decoding performance")
+
+    def panel_cross_fixation(self):
+        key = "panel_cross_fixation"
+        axs = self.gss[key]
+
+        if self.data.get(key) is None:
+            data = self.get_uninstructed_data()
+            out = npra.decode_strict_side_fixations(
+                data, self.fixations, keys=self.dec_keys
+            )
+            self.data[key] = out
+        out = self.data[key]
+
+        for res_i in out:
+            npv.visualize_strict_side_fixations(res_i, axs=axs)
+        for i, ax in enumerate(axs):
+            ax.set_xlabel("fixation number")
+            ax.set_title(self.dec_keys[i])
+            ax.set_ylabel("decoding performance")
+            gpl.clean_plot(ax, i)
