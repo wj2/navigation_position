@@ -298,6 +298,7 @@ def decode_strict_fixation(
     fix_starts=None,
     fix_ends=None,
     regions=None,
+    balance_field=None, 
     **kwargs,
 ):
     if fix_starts is None:
@@ -306,10 +307,14 @@ def decode_strict_fixation(
         fix_ends, _ = npav.get_nth_fixation(data, n + 1, start_or_end="start", tzf=tzf)
 
     pops = data.get_bounded_firing_rates(fix_starts, fix_ends, regions=regions)
+    if balance_field is not None:
+        balance_data = data[balance_field]
+    else:
+        balance_data = None
     out_dicts = []
     for i, pop in enumerate(pops):
         labels_i = np.array(labels[i]).astype(float)
-        pop_i, labels_i_filt = u.filter_nan(pop, labels_i)
+        pop_i, labels_i_filt, balance_i = u.filter_nan(pop, labels_i, balance_data[i])
         if np.prod(pop_i.shape) > 0:
             out = na.fold_skl_shape(
                 pop_i,
@@ -317,6 +322,8 @@ def decode_strict_fixation(
                 n_folds,
                 test_prop=test_prop,
                 mean=False,
+                rel_flat=balance_i,
+                balance_rel_fields=balance_field is not None,
                 **kwargs,
             )
             out["X"] = pop
@@ -363,6 +370,80 @@ def get_fixation_pops(
     return outs
 
 
+def decode_eye(
+    data,
+    fixations,
+    config_key="white_right",
+    regions=None,
+    test_prop=0.2,
+    model=skm.LinearSVC,
+    n_folds=100,
+    max_y=15,
+    max_x = 10,
+    gap_x=4,
+    balance_field=None,
+):
+    fix_data = get_fixation_pops(
+        data,
+        fixations,
+        (config_key,),
+        regions=regions,
+        combine_func=np.concatenate,
+    )
+    if balance_field is None:
+        balance_data = (None,) * len(fix_data)
+    else:
+        balance_data = data[balance_field]
+    out_sides = []
+    out_views = []
+    for i, fd in enumerate(fix_data):
+        pop = fd["pop"]
+        xs, ys = fd["end_xy"].T
+        config = fd["info"][:, 0]
+        config_mask = np.logical_not(pd.isna(config))
+
+        xs_mask = np.logical_and(np.abs(xs) > gap_x/2, np.abs(xs) < max_x)
+        ys_mask = np.logical_and(ys > -max_y, ys < max_y)
+        mask = np.logical_and(np.logical_and(xs_mask, ys_mask), config_mask)
+        if balance_data[i] is not None:
+            rel_flat = balance_data[i][mask]
+            balance_rel_fields = True
+        else:
+            rel_flat = None
+            balance_rel_fields = False
+            
+        if np.sum(mask) > 0:
+            side_targ = xs > 0
+            out_side = na.fold_skl_shape(
+                pop[mask],
+                side_targ[mask],
+                n_folds,
+                mean=False,
+                model=model,
+                test_prop=test_prop,
+                rel_flat=rel_flat,
+                balance_rel_fields=balance_rel_fields,
+            )
+            out_sides.append(out_side)
+
+            view_targ = np.logical_xor(config == 1, xs > 0)
+            out_view = na.fold_skl_shape(
+                pop[mask],
+                view_targ[mask],
+                n_folds,
+                mean=False,
+                model=model,
+                test_prop=test_prop,
+                rel_flat=rel_flat,
+                balance_rel_fields=balance_rel_fields,
+            )
+            out_views.append(out_view)
+        else:
+            out_sides.append(None)
+            out_views.append(None)
+    return out_sides, out_views        
+
+
 def decode_strict_side_fixations(
     data,
     ns,
@@ -373,12 +454,23 @@ def decode_strict_side_fixations(
     n_folds=100,
     model=skm.LinearSVC,
     regions=None,
+    balance_field=None,
     **kwargs,
 ):
-    reps = get_fixation_pops(data, ns, keys, regions=regions,)
+    reps = get_fixation_pops(
+        data,
+        ns,
+        keys,
+        regions=regions,
+    )
     outs = []
-    for rep in reps:
+    if balance_field is not None:
+        balance_data = data[balance_field]
+    else:
+        balance_data = (None,) * len(reps)
+    for ri, rep in enumerate(reps):
         out_r = {}
+        bd_r = balance_data[ri]
         for j, k in enumerate(keys):
             targ = rep["info"][:, j]
             mask = np.logical_not(pd.isna(targ))
@@ -392,6 +484,14 @@ def decode_strict_side_fixations(
                     right = rep["start_xy"][mask][:, 0] > offset + gap / 2
                     ls_mask = np.logical_and(fix, left)
                     rs_mask = np.logical_and(fix, right)
+                    if bd_r is None:
+                        rel_flat = None
+                        gen_rel = None
+                        balance_rel_fields = False
+                    else:
+                        rel_flat = bd_r[rs_mask]
+                        gen_rel = bd_r[ls_mask]
+                        balance_rel_fields = True
 
                     out_ji = na.fold_skl_shape(
                         pop[rs_mask],
@@ -402,6 +502,9 @@ def decode_strict_side_fixations(
                         l_gen=targ[ls_mask],
                         test_prop=test_prop,
                         model=model,
+                        rel_flat=rel_flat,
+                        gen_rel=gen_rel,
+                        balance_rel_fields=balance_rel_fields,
                         **kwargs,
                     )
                     out_j[n] = out_ji

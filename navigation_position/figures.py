@@ -39,6 +39,22 @@ class NavigationFigure(pu.Figure):
         data = self.get_exper_data()
         return npa.mask_completed_trials(data, correct_only=True)
 
+    def get_exper_data(self):
+        data = self.load_all_data()
+        return data
+
+    def get_trial_string_data(self):
+        match self.trial_string:
+            case "uninstructed":
+                data = self.get_uninstructed_data()
+            case "instructed":
+                data = self.get_instructed_data()
+            case "correct":
+                data = self.get_correct_data()
+            case "all":
+                data = self.get_exper_data()
+        return data
+
 
 class ViewFigure(pu.Figure):
     def __init__(
@@ -124,8 +140,10 @@ class FixationAnalysis(NavigationFigure):
         date=None,
         fig_key="fixation_fig",
         dec_keys=("chose_right", "white_right", "pink_right"),
+        trial_string="uninstructed",
         regions=None,
         fixations=(-1, 0, 1, 2),
+        balance_correct=False,
         **kwargs,
     ):
         cf = u.ConfigParserColor()
@@ -133,11 +151,16 @@ class FixationAnalysis(NavigationFigure):
         params = cf[fig_key]
         fsize = (5, 12)
 
+        self.trial_string = trial_string
         self.params = params
         self.date = date
         self.regions = regions
         self.dec_keys = dec_keys
         self.fixations = fixations
+        if balance_correct:
+            self.balance_field = "correct_trial"
+        else:
+            self.balance_field = None
         super().__init__(fsize, params, **kwargs)
 
     def make_gss(self):
@@ -161,17 +184,17 @@ class FixationAnalysis(NavigationFigure):
 
         n_plots = len(self.dec_keys)
 
-        dec_ax = self.get_axs((self.gs[25:45, 20:80],), squeeze=False)[0, 0]
+        dec_ax = self.get_axs((self.gs[25:45, :55],), squeeze=False)[0, 0]
         gen_grid = pu.make_mxn_gridspec(
             self.gs,
             1,
             n_plots,
-            45,
+            50,
             65,
             0,
             100,
             4,
-            20,
+            5,
         )
         gen_axs = self.get_axs(gen_grid, sharex="all", sharey="all", squeeze=True)
 
@@ -190,6 +213,11 @@ class FixationAnalysis(NavigationFigure):
         )
         cf_axs = self.get_axs(cf_grid, sharex="all", sharey="all", squeeze=True)
         gss["panel_cross_fixation"] = cf_axs
+
+        eye_ax = self.get_axs(
+            (self.gs[25:45, 60:100],), squeeze=False, share_ax_y=gss["panel_dec"][0]
+        )[0, 0]
+        gss["panel_eye_decoding"] = eye_ax
         self.gss = gss
 
     def get_exper_data(self):
@@ -218,7 +246,7 @@ class FixationAnalysis(NavigationFigure):
         full_key = self._make_full_key(key)
         if self.data.get(full_key) is None:
             outs = npra.get_fixation_pops(
-                self.get_uninstructed_data(),
+                self.get_trial_string_data(),
                 self.fixations,
                 self.dec_keys,
                 combine_func=np.stack,
@@ -263,7 +291,7 @@ class FixationAnalysis(NavigationFigure):
 
         full_key = self._make_full_key(key)
         if self.data.get(full_key) is None or recompute:
-            data = self.get_uninstructed_data()
+            data = self.get_trial_string_data()
             out = {}
             for k in self.dec_keys:
                 dec_k = npra.decode_strict_fixation_seq(
@@ -272,6 +300,7 @@ class FixationAnalysis(NavigationFigure):
                     model=skm.LinearSVC,
                     n=len(self.fixations) - 1,
                     regions=self.regions,
+                    balance_field=self.balance_field,
                 )
                 gen_k = npra.generalize_strict_fixation_pops(
                     dec_k,
@@ -283,7 +312,7 @@ class FixationAnalysis(NavigationFigure):
         res = self.data[full_key]
         maxes = []
         for _, res_k in res.values():
-            try: 
+            try:
                 vmax_k = np.max(
                     np.mean(
                         np.stack(list(i for i in res_k if i is not None), axis=0),
@@ -291,7 +320,7 @@ class FixationAnalysis(NavigationFigure):
                     )
                 )
             except ValueError:
-                vmax_k = .5
+                vmax_k = 0.5
             maxes.append(vmax_k)
         vmax = np.max(maxes)
         if self.regions is None:
@@ -325,7 +354,8 @@ class FixationAnalysis(NavigationFigure):
                 vmax=vmax,
                 ax=axs_gen[i],
             )
-            axs_gen[i].set_ylabel("trained saccade")
+            if i == 0:
+                axs_gen[i].set_ylabel("trained saccade")
             axs_gen[i].set_xlabel("tested saccade")
             axs_gen[i].set_aspect("equal")
         plt.colorbar(m, ax=axs_gen, label="decoding performance")
@@ -335,9 +365,13 @@ class FixationAnalysis(NavigationFigure):
         axs = self.gss[key]
 
         if self.data.get(key) is None:
-            data = self.get_uninstructed_data()
+            data = self.get_trial_string_data()
             out = npra.decode_strict_side_fixations(
-                data, self.fixations, keys=self.dec_keys, regions=self.regions,
+                data,
+                self.fixations,
+                keys=self.dec_keys,
+                regions=self.regions,
+                balance_field=self.balance_field,
             )
             self.data[key] = out
         out = self.data[key]
@@ -359,3 +393,57 @@ class FixationAnalysis(NavigationFigure):
             if i == 0:
                 ax.set_ylabel("decoding performance")
             gpl.clean_plot(ax, i)
+
+    def get_session_colors(self, n_sessions=None):
+        if n_sessions is None:
+            n_sessions = len(self.get_exper_data())
+        cmap = plt.get_cmap(self.params.get("session_cmap"))
+        s_pts = np.linspace(0, 1, n_sessions + 1)[:-1]
+        colors = cmap(s_pts)
+        return colors
+
+    def panel_eye_decoding(self):
+        key = "panel_eye_decoding"
+        ax = self.gss[key]
+
+        if self.data.get(key) is None:
+            out_white = npra.decode_eye(
+                self.get_trial_string_data(),
+                self.fixations,
+                "white_right",
+                regions=self.regions,
+                balance_field=self.balance_field,
+            )
+            out_pink = npra.decode_eye(
+                self.get_trial_string_data(),
+                self.fixations,
+                "pink_right",
+                regions=self.regions,
+                balance_field=self.balance_field,
+            )
+            self.data[key] = out_white, out_pink
+
+        offset = 0.1
+        white_pts = [0 - offset, 1 - offset]
+        pink_pts = [0 + offset, 1 + offset]
+        (white_sides, white_views), (pink_sides, pink_views) = self.data[key]
+        colors = self.get_session_colors(len(white_sides))
+        for i, w_side in enumerate(white_sides):
+            if w_side is not None:
+                gpl.violinplot(
+                    [w_side["score"], white_views[i]["score"]],
+                    white_pts,
+                    ax=ax,
+                    color=(colors[i], colors[i]),
+                )
+            if pink_sides[i] is not None:
+                gpl.violinplot(
+                    [pink_sides[i]["score"], pink_views[i]["score"]],
+                    pink_pts,
+                    ax=ax,
+                    color=(colors[i], colors[i]),
+                )
+        gpl.add_hlines(0.5, ax)
+        ax.set_xticks(np.mean((white_pts, pink_pts), axis=0))
+        ax.set_xticklabels(("view side", "view target"))
+        gpl.clean_plot(ax, 0)
