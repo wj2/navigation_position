@@ -345,15 +345,16 @@ class FixationAnalysis(NavigationFigure):
                     )
                     gens.append(gen[j])
 
-            gen_plot = np.mean(np.stack(gens, axis=0), axis=(0, -1, -2))
             ax.set_ylabel("decoding performance")
-            m = gpl.pcolormesh(
-                gen_plot,
-                cmap="Blues",
-                vmin=0.5,
-                vmax=vmax,
-                ax=axs_gen[i],
-            )
+            if len(gens) > 0:
+                gen_plot = np.mean(np.stack(gens, axis=0), axis=(0, -1, -2))
+                m = gpl.pcolormesh(
+                    gen_plot,
+                    cmap="Blues",
+                    vmin=0.5,
+                    vmax=vmax,
+                    ax=axs_gen[i],
+                )
             if i == 0:
                 axs_gen[i].set_ylabel("trained saccade")
             axs_gen[i].set_xlabel("tested saccade")

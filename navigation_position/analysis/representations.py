@@ -383,17 +383,16 @@ def decode_eye(
     gap_x=4,
     balance_field=None,
 ):
+    use_keys = (config_key,)
+    if balance_field is not None:
+        use_keys = use_keys + (balance_field,)
     fix_data = get_fixation_pops(
         data,
         fixations,
-        (config_key,),
+        use_keys,
         regions=regions,
         combine_func=np.concatenate,
     )
-    if balance_field is None:
-        balance_data = (None,) * len(fix_data)
-    else:
-        balance_data = data[balance_field]
     out_sides = []
     out_views = []
     for i, fd in enumerate(fix_data):
@@ -405,8 +404,9 @@ def decode_eye(
         xs_mask = np.logical_and(np.abs(xs) > gap_x/2, np.abs(xs) < max_x)
         ys_mask = np.logical_and(ys > -max_y, ys < max_y)
         mask = np.logical_and(np.logical_and(xs_mask, ys_mask), config_mask)
-        if balance_data[i] is not None:
-            rel_flat = balance_data[i][mask]
+        if balance_field is not None:
+            bd_i = fd["info"][:, -1]
+            rel_flat = np.asarray(bd_i, dtype=int)[mask]
             balance_rel_fields = True
         else:
             rel_flat = None
@@ -457,20 +457,23 @@ def decode_strict_side_fixations(
     balance_field=None,
     **kwargs,
 ):
+    if balance_field is not None:
+        keys_use = keys + (balance_field,)
+    else:
+        keys_use = keys
     reps = get_fixation_pops(
         data,
         ns,
-        keys,
+        keys_use,
         regions=regions,
     )
     outs = []
-    if balance_field is not None:
-        balance_data = data[balance_field]
-    else:
-        balance_data = (None,) * len(reps)
     for ri, rep in enumerate(reps):
         out_r = {}
-        bd_r = balance_data[ri]
+        if balance_field is not None:
+            bd_r = rep["info"][:, -1]
+        else:
+            bd_r = None
         for j, k in enumerate(keys):
             targ = rep["info"][:, j]
             mask = np.logical_not(pd.isna(targ))
@@ -489,8 +492,8 @@ def decode_strict_side_fixations(
                         gen_rel = None
                         balance_rel_fields = False
                     else:
-                        rel_flat = bd_r[rs_mask]
-                        gen_rel = bd_r[ls_mask]
+                        rel_flat = np.asarray(bd_r, dtype=int)[rs_mask]
+                        gen_rel = np.asarray(bd_r, dtype=int)[ls_mask]
                         balance_rel_fields = True
 
                     out_ji = na.fold_skl_shape(
