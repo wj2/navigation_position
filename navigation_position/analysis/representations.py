@@ -479,7 +479,7 @@ def decode_strict_side_fixations(
             mask = np.logical_not(pd.isna(targ))
             pop = rep["pop"][mask]
             targ = targ[mask].astype(int)
-            if len(pop) > 0:
+            if np.prod(pop.shape) > 0:
                 out_j = {}
                 for i, n in enumerate(ns):
                     fix = rep["ns"][mask] == n
