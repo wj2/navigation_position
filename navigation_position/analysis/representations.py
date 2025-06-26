@@ -492,8 +492,8 @@ def decode_strict_side_fixations(
                         gen_rel = None
                         balance_rel_fields = False
                     else:
-                        rel_flat = np.asarray(bd_r, dtype=int)[rs_mask]
-                        gen_rel = np.asarray(bd_r, dtype=int)[ls_mask]
+                        rel_flat = np.asarray(bd_r, dtype=int)[mask][rs_mask]
+                        gen_rel = np.asarray(bd_r, dtype=int)[mask][ls_mask]
                         balance_rel_fields = True
 
                     out_ji = na.fold_skl_shape(
