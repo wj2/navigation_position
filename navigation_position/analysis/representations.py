@@ -496,20 +496,25 @@ def decode_strict_side_fixations(
                         gen_rel = np.asarray(bd_r, dtype=int)[mask][ls_mask]
                         balance_rel_fields = True
 
-                    out_ji = na.fold_skl_shape(
-                        pop[rs_mask],
-                        targ[rs_mask],
-                        n_folds,
-                        mean=False,
-                        c_gen=pop[ls_mask],
-                        l_gen=targ[ls_mask],
-                        test_prop=test_prop,
-                        model=model,
-                        rel_flat=rel_flat,
-                        gen_rel=gen_rel,
-                        balance_rel_fields=balance_rel_fields,
-                        **kwargs,
-                    )
+                    if np.sum(rs_mask) > 0:
+                        out_ji = na.fold_skl_shape(
+                            pop[rs_mask],
+                            targ[rs_mask],
+                            n_folds,
+                            mean=False,
+                            c_gen=pop[ls_mask],
+                            l_gen=targ[ls_mask],
+                            test_prop=test_prop,
+                            model=model,
+                            rel_flat=rel_flat,
+                            gen_rel=gen_rel,
+                            balance_rel_fields=balance_rel_fields,
+                            **kwargs,
+                        )
+                    else:
+                        nan_arr = np.zeros((n_folds, 1))
+                        nan_arr[:] = np.nan
+                        out_ji = {"score": nan_arr, "score_gen": nan_arr}
                     out_j[n] = out_ji
                 out_r[k] = out_j
         outs.append(out_r)
