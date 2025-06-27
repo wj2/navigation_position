@@ -310,7 +310,7 @@ def decode_strict_fixation(
     if balance_field is not None:
         balance_data = data[balance_field]
     else:
-        balance_data = None
+        balance_data = (None,) * len(data)
     out_dicts = []
     for i, pop in enumerate(pops):
         labels_i = np.array(labels[i]).astype(float)
