@@ -412,7 +412,7 @@ def decode_eye(
             rel_flat = None
             balance_rel_fields = False
             
-        if np.sum(mask) > 0:
+        if np.prod(pop[mask].shape) > 0:
             side_targ = xs > 0
             out_side = na.fold_skl_shape(
                 pop[mask],
