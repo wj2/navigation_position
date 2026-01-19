@@ -1,16 +1,27 @@
 import numpy as np
 import scipy.signal as sig
+import scipy.linalg as spla
 import sklearn.neighbors as sknn
 import sklearn.metrics.pairwise as skmp
 import sklearn.svm as skm
+import sklearn.model_selection as skms
+import sklearn.linear_model as sklm
+import sklearn.kernel_approximation as skka
+import sklearn.pipeline as skpipe
+import sklearn.cluster as skcluster
+import sklearn.preprocessing as skp
 import imblearn.under_sampling as imb_us
 import itertools as it
 import pandas as pd
+
+import torch.nn as nn
 
 import rsatoolbox as rsa
 import general.neural_analysis as na
 import general.utility as u
 import general.data_io as gio
+import general.torch.training as gtt
+import general.torch.rnns as gtrnn
 import navigation_position.auxiliary as npa
 from . import view as npav
 
@@ -52,6 +63,203 @@ default_waypoint_keys = (
     "UserVars.VR_Trial.Additional_Positions.x",
     "UserVars.VR_Trial.Additional_Positions.z",
 )
+
+
+class TimeRemover:
+    def __init__(self, model=sklm.Ridge, **kwargs):
+        self.model = model(**kwargs)
+
+    def fit(self, X, y):
+        self.model = self.model.fit(X, y)
+        vec = self.model.coef_
+        self.null_mat = spla.null_space(vec[None])
+        return self
+
+    def transform(self, X, y=None):
+        return X @ self.null_mat
+
+    def fit_transform(self, X, y=None):
+        self.fit(X, y)
+        return self.transform(X, y)
+
+
+def cluster_decoding(
+    X_tc,
+    y_tc,
+    n_folds=100,
+    est=skm.LinearSVC,
+    test_folds=100,
+    test_size=0.1,
+    pca=0.8,
+    var_thr=0.2,
+    clusterer=skcluster.KMeans,
+    n_clusters=50,
+    **kwargs,
+):
+    """cluster time bin activity, then superimpose for decoding
+    X_tc : N trials, K neurons, T time points
+    y_tc : N_trials, T time points
+    """
+    trl_mask = np.var(y_tc, axis=-1) < var_thr
+    X_tc = X_tc[trl_mask]
+    y = np.median(y_tc[trl_mask], axis=-1)
+    splitter = skms.ShuffleSplit(n_folds, test_size=test_size)
+    outs = []
+    for tr_inds, te_inds in splitter.split(X_tc):
+        X_tr = u.combine_dimensions(X_tc[tr_inds], 0, 2)
+        y_tr = y[tr_inds]
+        pipe = na.make_model_pipeline(
+            clusterer, pca=pca, n_clusters=n_clusters, **kwargs
+        )
+        pipe.fit(X_tr)
+        cs = pipe.predict(X_tr)[:, None]
+        c_ohe = skp.OneHotEncoder()
+        c_ohe.fit(cs)
+        cs_oh = c_ohe.transform(cs).toarray()
+        cs_group = u.uncombine_dimensions(cs_oh, 0, 1, X_tc.shape[-1])
+        targ_tr = np.sum(cs_group, axis=1)
+        model = na.make_model_pipeline(est)
+        model.fit(targ_tr, y_tr)
+
+        X_te = u.combine_dimensions(X_tc[te_inds], 0, 2)
+        y_te = y[te_inds]
+        cs_te = pipe.predict(X_te)[:, None]
+        cs_oh_te = c_ohe.transform(cs_te).toarray()
+        cs_group_te = u.uncombine_dimensions(cs_oh_te, 0, 1, X_tc.shape[-1])
+        targ_te = np.sum(cs_group_te, axis=1)
+        out = {
+            "test_score": model.score(targ_te, y_te),
+        }
+        outs.append(out)
+    return u.aggregate_dictionary(outs)
+
+
+def collapsed_decoding(
+    X_tc,
+    y_tc,
+    n_folds=100,
+    est=skm.LinearSVC,
+    test_folds=100,
+    test_size=0.1,
+    pca=0.8,
+    var_thr=0.2,
+    use_sum=False,
+    **kwargs,
+):
+    """use entire trial to do decoding
+    X_tc : N trials, K neurons, T time points
+    y_tc : N_trials, T time points
+    """
+    trl_mask = np.var(y_tc, axis=-1) < var_thr
+    X_tc = X_tc[trl_mask]
+    y = y_tc[trl_mask][..., 0]
+    if use_sum:
+        X_coll = np.sum(X_tc, axis=-1)
+    else:
+        X_coll = u.combine_dimensions(X_tc, 1, 2)
+    pipe = na.make_model_pipeline(est, pca=pca, **kwargs)
+    return skms.cross_validate(
+        pipe, X_coll, y, cv=skms.ShuffleSplit(n_folds, test_size=test_size)
+    )
+
+
+def sparse_decoding(X_tc, y_tc, n_folds=100, test_size=0.1, est=skm.LinearSVC):
+    """use novelty detection to sparsify
+    X_tc : N trials, K neurons, T time points
+    y_tc : N_trials, F features, T time points
+    """
+    splitter = skms.ShuffleSplit(n_folds, test_size=test_size)
+    outs = []
+    for tr_inds, te_inds in splitter.split(X_tc):
+        X_tr = u.combine_dimensions(X_tc[tr_inds], 0, 2)
+        y_tr = u.combine_dimensions(y_tc[tr_inds], 0, 2)
+
+        pipe = na.make_model_pipeline(norm=True, pca=0.8)
+        pipe = pipe.fit(X_tr)
+        X_tr = pipe.transform(X_tr)
+
+        kmap = skka.Nystroem()
+        outlier_detector = sklm.SGDOneClassSVM()
+        pipe_outlier = skpipe.make_pipeline(kmap, outlier_detector)
+        # outlier_detector = skm.OneClassSVM()
+        outlier_mask = pipe_outlier.fit_predict(X_tr) == -1
+        y_tr_use = y_tr[outlier_mask]
+        X_tr_use = X_tr[outlier_mask]
+
+        model = est()
+        model.fit(X_tr_use, y_tr_use)
+
+        X_te = X_tc[te_inds]
+        y_te = y_tc[te_inds]
+        X_tc_proj = np.stack(
+            list(
+                model.decision_function(pipe.transform(X_te[..., j]))
+                for j in range(X_tc.shape[-1])
+            ),
+            axis=-1,
+        )
+        test_tc_score = np.stack(
+            list(
+                model.score(pipe.transform(X_te[..., j]), y_te[..., j])
+                for j in range(X_tc.shape[-1])
+            ),
+            axis=-1,
+        )
+        X_te_flat = u.combine_dimensions(X_te, 0, 2)
+        y_te_flat = u.combine_dimensions(y_te, 0, 2)
+        X_te_flat = pipe.transform(X_te_flat)
+        outlier_mask_te = pipe_outlier.predict(X_te_flat) == -1
+        test_proj = model.decision_function(X_te_flat[outlier_mask_te])
+        test_score = model.score(X_te_flat[outlier_mask_te], y_te_flat[outlier_mask_te])
+
+        out = {
+            "pipe": pipe,
+            "outlier": outlier_detector,
+            "outlier_mask": outlier_mask,
+            "test_tc_proj": X_tc_proj,
+            "test_outlier_proj": test_proj,
+            "test_tc_score": test_tc_score,
+            "test_outlier_score": test_score,
+        }
+        outs.append(out)
+    return u.aggregate_dictionary(outs)
+
+
+def rnn_decoding(
+    X,
+    y,
+    hidden_units=10,
+    n_folds=10,
+    test_frac=0.1,
+    corr_si=None,
+    verbose=False,
+    **kwargs,
+):
+    if corr_si is None:
+        corr_si = np.ones(len(y), dtype=bool)
+    y_use = np.swapaxes(y, 1, 2)
+    splitter = skms.ShuffleSplit(n_folds, test_size=test_frac)
+
+    outs = []
+    for tr_inds, te_inds in splitter.split(X, y_use):
+        pipe = na.make_model_pipeline(norm=True, single_tc=True, **kwargs)
+        X_tr = pipe.fit_transform(X[tr_inds])
+        X_te = pipe.transform(X[te_inds])
+
+        model = gtrnn.SimpleLSTM(
+            X_tr.shape[1], hidden_units, y_use.shape[-1], output_trs=nn.Sigmoid
+        )
+        out = gtt.train_model_on_data(
+            model,
+            X_tr,
+            y_use[tr_inds],
+            val_dataset=(X_te, y_use[te_inds]),
+            verbose=verbose,
+        )
+        out["correct"] = corr_si[te_inds]
+
+        outs.append(out)
+    return u.aggregate_dictionary(outs)
 
 
 def get_waypoint_locs(data, waypoint_keys=default_waypoint_keys):
@@ -298,7 +506,7 @@ def decode_strict_fixation(
     fix_starts=None,
     fix_ends=None,
     regions=None,
-    balance_field=None, 
+    balance_field=None,
     **kwargs,
 ):
     if fix_starts is None:
@@ -379,7 +587,7 @@ def decode_eye(
     model=skm.LinearSVC,
     n_folds=100,
     max_y=15,
-    max_x = 10,
+    max_x=10,
     gap_x=4,
     balance_field=None,
 ):
@@ -401,7 +609,7 @@ def decode_eye(
         config = fd["info"][:, 0]
         config_mask = np.logical_not(pd.isna(config))
 
-        xs_mask = np.logical_and(np.abs(xs) > gap_x/2, np.abs(xs) < max_x)
+        xs_mask = np.logical_and(np.abs(xs) > gap_x / 2, np.abs(xs) < max_x)
         ys_mask = np.logical_and(ys > -max_y, ys < max_y)
         mask = np.logical_and(np.logical_and(xs_mask, ys_mask), config_mask)
         if balance_field is not None:
@@ -411,7 +619,7 @@ def decode_eye(
         else:
             rel_flat = None
             balance_rel_fields = False
-            
+
         if np.prod(pop[mask].shape) > 0:
             side_targ = xs > 0
             out_side = na.fold_skl_shape(
@@ -441,7 +649,7 @@ def decode_eye(
         else:
             out_sides.append(None)
             out_views.append(None)
-    return out_sides, out_views        
+    return out_sides, out_views
 
 
 def decode_strict_side_fixations(
@@ -1067,6 +1275,7 @@ def decode_masks(
         decode_m1=gen_mask1,
         decode_m2=gen_mask2,
         time_zero_field=tzf,
+        ret_full_dict=True,
         **kwargs,
     )
     return out

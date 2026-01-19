@@ -1,10 +1,20 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import sklearn.svm as skm
+import sklearn.model_selection as skms
+import scipy.signal as sig
+import dynamax.hidden_markov_model as dhmm
+import jax
+import jax.random as jr
+import functools as ft
 
 import general.plotting as gpl
 import general.utility as u
+import general.neural_analysis as na
+import general.unsupervised_analysis as gua
 import general.data_io as gio
 import navigation_position.analysis.representations as npra
+import navigation_position.auxiliary as npa
 
 
 default_dec_vars = ("choice side", "correct side", "rule", "white side", "pink side")
@@ -111,8 +121,10 @@ def visualize_change_of_mind_dec(
                     zorder=-1,
                     alpha=indiv_alpha,
                 )
-                if (dec_dicts is not None
-                    and dec_dicts[k].get("projection_gen") is not None):
+                if (
+                    dec_dicts is not None
+                    and dec_dicts[k].get("projection_gen") is not None
+                ):
                     proj = np.mean(dec_dicts[k]["projection_gen"], axis=0)
                     labels = dec_dicts[k]["labels_gen"]
                     flip_proj = proj * np.expand_dims(
@@ -134,6 +146,648 @@ def visualize_change_of_mind_dec(
             gpl.add_hlines(chance, axs[i, j])
             gpl.add_vlines(0, axs[i, j])
     return f, axs
+
+
+def _norm_cond_predictors(preds, conds):
+    out = []
+    for i, pred in enumerate(preds):
+        pred = pred - conds[i][..., None]
+        out.append(pred)
+    return out
+
+
+def _rad_to_xy_predictors(preds, mask):
+    out = []
+    for i, pred in enumerate(preds):
+        dims = []
+        for j in range(pred.shape[1]):
+            if mask[j]:
+                pred_dim = np.swapaxes(u.radian_to_sincos(np.radians(pred[:, j])), 1, 2)
+            else:
+                pred_dim = np.expand_dims(pred[:, j], 1)
+            dims.append(pred_dim)
+        out.append(np.concatenate(dims, axis=1))
+    return out
+
+
+def _get_transition_times(diff, xs, thr):
+    out = np.zeros(len(diff))
+    for i, d in enumerate(diff):
+        last_wrong = np.where(d > thr)[0][-1]
+        right = np.where(d < 0)[0]
+        late_right = right[right > last_wrong]
+        if len(late_right) > 0:
+            trans = xs[late_right[0]]
+        else:
+            trans = np.nan
+        out[i] = trans
+    return out
+
+
+def _detect_switch_time(
+    proj, y, xs, thr=None, fill_noncom_times=True, commit_time=200, thr_mult=0.8
+):
+    commit_bins = commit_time / np.diff(xs)[0]
+    thr = np.std(proj) if thr is None else thr
+    thr = thr * thr_mult
+
+    targs = np.unique(y)
+    proj_diffs = []
+    for targ in targs:
+        mu = np.mean(proj[y == targ], axis=0, keepdims=True)
+        proj_diffs.append(np.sqrt((proj - mu) ** 2))
+    p1, p2 = proj_diffs
+    t1, t2 = targs
+    diff12 = p1 - p2
+    c1_to_2_mask = np.logical_and(
+        np.logical_and(np.sum(diff12 > thr, axis=1) >= commit_bins, diff12[:, -1] < 0),
+        y == t1,
+    )
+    c2_to_1_mask = np.logical_and(
+        np.logical_and(
+            np.sum(-diff12 > thr, axis=1) >= commit_bins, -diff12[:, -1] < 0
+        ),
+        y == t2,
+    )
+    times = np.zeros(len(y))
+    times[:] = np.nan
+    times[c1_to_2_mask] = _get_transition_times(diff12[c1_to_2_mask], xs, thr)
+    times[c2_to_1_mask] = _get_transition_times(-diff12[c2_to_1_mask], xs, thr)
+    mask = np.logical_not(np.isnan(times))
+    if fill_noncom_times:
+        times[np.isnan(times)] = np.nanmean(times)
+    return diff12, mask, times
+
+
+def com_hmm_states(
+        *args, **kwargs, ):
+    return gua.hmm_states_cv(*args, **kwargs)
+
+
+def com_dynamics_diff(X, y, com_mask, cv=skms.LeaveOneOut, recode=True):
+    out_traj = np.zeros((4, X.shape[0], X.shape[-1]))
+    for i, (tr_inds, te_inds) in enumerate(cv().split(X, y)):
+        X_tr = X[tr_inds]
+        y_tr = y[tr_inds]
+        m_s_tr = com_mask[tr_inds]
+        m0_tr = np.logical_and(y_tr == 0, ~m_s_tr)
+        m1_tr = np.logical_and(y_tr == 1, ~m_s_tr)
+        m0_c_tr = np.logical_and(y_tr == 0, m_s_tr)
+        m1_c_tr = np.logical_and(y_tr == 1, m_s_tr)
+
+        X_0s = u.make_unit_vector(np.mean(X_tr[m0_tr], axis=0).T).T
+        X_1s = u.make_unit_vector(np.mean(X_tr[m1_tr], axis=0).T).T
+        X_0c = u.make_unit_vector(np.mean(X_tr[m0_c_tr], axis=0).T).T
+        X_1c = u.make_unit_vector(np.mean(X_tr[m1_c_tr], axis=0).T).T
+
+        diff_uv = u.make_unit_vector((X_0s - X_1s).T).T[None]
+        comb_uv = u.make_unit_vector(np.mean((X_0s, X_1s), axis=0).T).T[None]
+        cs1_uv = u.make_unit_vector((X_0c - X_1s).T).T[None]
+        cs2_uv = u.make_unit_vector((X_1c - X_0s).T).T[None]
+        uv_group = np.stack((diff_uv, comb_uv, cs1_uv, cs2_uv), axis=0)
+        out_traj[:, i] = np.sum(uv_group * X[te_inds][None], axis=-2)[:, 0]
+    return out_traj, y, com_mask
+
+
+def com_dynamics(X, y, com_mask, cv=skms.LeaveOneOut, recode=True):
+    X_s = X[~com_mask]
+    y_s = y[~com_mask]
+    X_c = X[com_mask]
+    y_c = y[com_mask]
+    c_traj = np.zeros(
+        (
+            len(X_s),
+            2,
+        )
+        + (X_c.shape[0], X_c.shape[-1])
+    )
+    s_traj = np.zeros((2,) + (X_s.shape[0], X_s.shape[-1]))
+    for i, (tr_inds, te_inds) in enumerate(cv().split(X_s, y_s)):
+        X_s_tr = X_s[tr_inds]
+        y_s_tr = y_s[tr_inds]
+
+        X_s_tr1 = u.make_unit_vector(np.mean(X_s_tr[y_s_tr == 0], axis=0).T).T
+        X_s_tr2 = u.make_unit_vector(np.mean(X_s_tr[y_s_tr == 1], axis=0).T).T
+        if recode:
+            X_s_r1 = u.make_unit_vector(np.mean((X_s_tr1, X_s_tr2), axis=0).T).T
+            X_s_r2 = u.make_unit_vector((X_s_tr1 - X_s_tr2).T).T
+            X_s_tr1 = X_s_r2
+            X_s_tr2 = X_s_r1
+        X_s_tr1 = X_s_tr1[None]
+        X_s_tr2 = X_s_tr2[None]
+
+        s_traj[0, i] = np.sum(X_s[te_inds] * X_s_tr1, axis=1)
+        s_traj[1, i] = np.sum(X_s[te_inds] * X_s_tr2, axis=1)
+
+        c_traj[i, 0] = np.sum(X_c * X_s_tr1, axis=1)
+        c_traj[i, 1] = np.sum(X_c * X_s_tr2, axis=1)
+    return {"stable": (s_traj, y_s), "change": (c_traj, y_c)}
+
+
+@gpl.ax_adder()
+def plot_com_dynamics(
+    X_s,
+    y_s,
+    X_c,
+    y_c,
+    ax=None,
+    alpha_bg=0.1,
+    ms=5,
+    lw_bg=0.1,
+    cdict=None,
+    plot_com=True,
+):
+    if cdict is None:
+        cdict = {0: "r", 1: "b"}
+    for i in range(X_s.shape[1]):
+        ax.plot(*X_s[:, i], color=cdict[y_s[i]], lw=lw_bg, alpha=alpha_bg)
+    s_y0 = np.mean(X_s[:, y_s == 0], axis=1)
+    gpl.plot_trace_ends(*s_y0, color=cdict[0], ms=ms, ax=ax)
+
+    s_y1 = np.mean(X_s[:, y_s == 1], axis=1)
+    gpl.plot_trace_ends(*s_y1, color=cdict[1], ms=ms, ax=ax)
+
+    X_c = np.mean(X_c, axis=0)
+
+    if plot_com:
+        c_y0 = np.mean(X_c[:, y_c == 0], axis=1)
+        c_y1 = np.mean(X_c[:, y_c == 1], axis=1)
+        gpl.plot_trace_ends(*c_y0, ax=ax, ms=ms, color=cdict[0], ls="dashed")
+        gpl.plot_trace_ends(*c_y1, ax=ax, ms=ms, color=cdict[1], ls="dashed")
+
+    gpl.make_xaxis_scale_bar(ax)
+    gpl.make_yaxis_scale_bar(ax, double=False)
+    gpl.clean_plot(ax, 0)
+
+    # for i in range(X_c.shape[1]):
+    #     ax.plot(*X_c[:, i], color=cdict[y_c[i]], lw=.5, ls="dashed")
+    #     ax.plot(*X_c[:, i, 0], "o", color=cdict[y_c[i]], lw=.5, ls="dashed")
+    #     ax.plot(*X_c[:, i, -1], "o", color=cdict[y_c[i]], lw=.5, ls="dashed")
+    # ax.plot(*c_y0, color=cdict[0], lw=1, ls="dashed")
+    # ax.plot(*c_y1, color=cdict[1], lw=1, ls="dashed")
+
+
+CHANGE_OF_MIND_START = "approach_start"
+
+
+def change_of_mind_populations(
+    data,
+    time_start=CHANGE_OF_MIND_START,
+    time_zeros=None,
+    time_begin=-1000,
+    time_end=1000,
+    window=200,
+    binstep=20,
+    pca_pre=0.8,
+    choice_field="chose_right",
+    **kwargs,
+):
+    pops, xs = data.get_populations(
+        window,
+        time_begin,
+        time_end,
+        binstep=binstep,
+        time_zero_field=time_start,
+        time_zero=time_zeros,
+        **kwargs,
+    )
+    choice = data[choice_field]
+    outs = []
+    for i, pop_i in enumerate(pops):
+        targ_i = choice[i].to_numpy()
+        if pop_i.shape[1] > 0:
+            out = na.targeted_dimensionality_reduction(
+                pop_i,
+                targ_i,
+                model=na.LinearSVCWrapper,
+                cv=skms.LeaveOneGroupOut(),
+                pre_pca=pca_pre,
+            )
+            out["X"] = pop_i
+            out["y"] = targ_i
+            diff_i, mask_i, time_i = _detect_switch_time(
+                np.squeeze(out["test_projection"]), targ_i, xs
+            )
+            out["diff"] = diff_i
+        else:
+            out = None
+        outs.append(out)
+    return outs, xs
+
+
+@gpl.ax_adder()
+def plot_flux_heatmap(
+    proj,
+    targ,
+    xs,
+    bins=None,
+    ax=None,
+    cmap="PiYG",
+    count_thr=2,
+    n_x_bins=20,
+    n_y_bins=50,
+    y_max=5,
+    lw=0.5,
+):
+    """Plot the average direction of neural activity from a particular point.
+
+    Parameters
+    ----------
+    proj : array_like, N x T
+       Projection along target dimension.
+    targ : array_like, N
+       Target values for each trial.
+    xs : array_like, T
+       The time points for each observation.
+    bins : tuple, default=None
+       The bins to use for the histogram. If None, they will be chosen according to
+       n_x_bins and n_y_bins.
+    ax : matplotlib.Axes, default=None
+       The axes to use for plotting.
+    cmap : string, default="bwr"
+       The colormap for the heatmap.
+    count_thr : int, default=2
+       The number of trials needed in a bin to keep it rather than set it to nan in the
+       plot.
+    n_x_bins, n_y_bins : int, default=20
+       The number of bins to use for the x and y axes, respectively.
+
+    Returns
+    -------
+    None
+    """
+    proj_diff = proj[:, 1:] - proj[:, :-1]
+    xs = xs[:-1]
+    proj = proj[:, :-1]
+    if bins is None:
+        proj_ext = np.min([np.max(np.abs(proj)), y_max])
+        bins = (
+            np.linspace(-proj_ext, proj_ext, n_y_bins + 1),
+            np.linspace(xs[0], xs[-1], n_x_bins + 1),
+        )
+    targ_tiled = np.tile(targ[:, None], (1, proj.shape[1]))
+    pd_flat = proj_diff.flatten()
+    xs_flat = np.tile(xs[None], (proj.shape[0], 1)).flatten()
+    p_flat = proj.flatten()
+    t_flat = targ_tiled.flatten()
+    t_flat[t_flat == 0] = -1
+    hmap, bins = np.histogramdd((p_flat, xs_flat), bins=bins, weights=pd_flat)
+    counts, _ = np.histogramdd((p_flat, xs_flat), bins=bins)
+    hmap[counts < count_thr] = np.nan
+    hmap = hmap / counts
+
+    extreme = np.nanstd(hmap)
+    y_bins, x_bins = bins
+    x_bins = x_bins[:-1] + np.diff(x_bins)[0] / 2
+    y_bins = y_bins[:-1] + np.diff(y_bins)[0] / 2
+    gpl.pcolormesh(x_bins, y_bins, hmap, cmap=cmap, vmin=-extreme, vmax=extreme, ax=ax)
+
+
+@gpl.ax_adder()
+def plot_com_heatmap(
+    proj,
+    targ,
+    xs,
+    bins=None,
+    ax=None,
+    cmap="Grays",
+    count_thr=2,
+    n_x_bins=20,
+    n_y_bins=50,
+    y_max=5,
+    lw=0.5,
+):
+    """Plot the density of trials projected along a particular dimension.
+
+    Parameters
+    ----------
+    proj : array_like, N x T
+       Projection along target dimension.
+    targ : array_like, N
+       Target values for each trial.
+    xs : array_like, T
+       The time points for each observation.
+    bins : tuple, default=None
+       The bins to use for the histogram. If None, they will be chosen according to
+       n_x_bins and n_y_bins.
+    ax : matplotlib.Axes, default=None
+       The axes to use for plotting.
+    cmap : string, default="bwr"
+       The colormap for the heatmap.
+    count_thr : int, default=2
+       The number of trials needed in a bin to keep it rather than set it to nan in the
+       plot.
+    n_x_bins, n_y_bins : int, default=20
+       The number of bins to use for the x and y axes, respectively.
+
+    Returns
+    -------
+    None
+    """
+    if bins is None:
+        proj_ext = np.min([np.max(np.abs(proj)), y_max])
+        bins = (
+            np.linspace(-proj_ext, proj_ext, n_y_bins + 1),
+            np.linspace(xs[0], xs[-1], n_x_bins + 1),
+        )
+    targ_tiled = np.tile(targ[:, None], (1, proj.shape[1]))
+    xs_flat = np.tile(xs[None], (proj.shape[0], 1)).flatten()
+    p_flat = proj.flatten()
+    t_flat = targ_tiled.flatten()
+    t_flat[t_flat == 0] = -1
+    hmap, bins = np.histogramdd((p_flat, xs_flat), bins=bins, weights=t_flat)
+    counts, _ = np.histogramdd((p_flat, xs_flat), bins=bins)
+    hmap[counts < count_thr] = np.nan
+
+    extreme = np.nanmax(np.abs(hmap))
+    y_bins, x_bins = bins
+    x_bins = x_bins[:-1] + np.diff(x_bins)[0] / 2
+    y_bins = y_bins[:-1] + np.diff(y_bins)[0] / 2
+    gpl.pcolormesh(
+        x_bins, y_bins, counts, cmap=cmap, vmin=-extreme, vmax=extreme, ax=ax
+    )
+
+
+@gpl.ax_adder()
+def plot_com_heatmap_and_averages(
+    proj,
+    targ,
+    xs,
+    com_mask,
+    ax=None,
+    heatmap=True,
+    corr1_color="r",
+    corr2_color="b",
+    com1_color="m",
+    com2_color="g",
+    errorbar=False,
+    **kwargs,
+):
+    if heatmap:
+        plot_com_heatmap(proj, targ, xs, ax=ax, **kwargs)
+    proj_com = proj[com_mask]
+    targ_com = targ[com_mask]
+    proj_corr = proj[~com_mask]
+    targ_corr = targ[~com_mask]
+
+    if errorbar:
+        gpl.plot_trace_werr(
+            xs,
+            proj_com[targ_com == 0],
+            color=com1_color,
+            conf95=True,
+            ax=ax,
+        )
+        gpl.plot_trace_werr(
+            xs,
+            proj_com[targ_com == 1],
+            color=com2_color,
+            conf95=True,
+            ax=ax,
+        )
+
+        gpl.plot_trace_werr(
+            xs,
+            proj_corr[targ_corr == 0],
+            color=corr1_color,
+            conf95=True,
+            ax=ax,
+        )
+        gpl.plot_trace_werr(
+            xs,
+            proj_corr[targ_corr == 1],
+            color=corr2_color,
+            conf95=True,
+            ax=ax,
+        )
+    else:
+        ax.plot(xs, np.mean(proj_com[targ_com == 0], axis=0), color=com1_color)
+        ax.plot(xs, np.mean(proj_com[targ_com == 1], axis=0), color=com2_color)
+        ax.plot(xs, np.mean(proj_corr[targ_corr == 0], axis=0), color=corr1_color)
+        ax.plot(xs, np.mean(proj_corr[targ_corr == 1], axis=0), color=corr2_color)
+
+
+@gpl.ax_adder()
+def plot_com_heatmap_and_examples(
+    proj,
+    targ,
+    xs,
+    com_mask,
+    ax=None,
+    heatmap=True,
+    lw_corr=0.5,
+    lw_com=0.9,
+    corr_cmap="bwr",
+    com_cmap="vanimo",
+    **kwargs,
+):
+    if heatmap:
+        plot_com_heatmap(proj, targ, xs, ax=ax, **kwargs)
+    proj_com = proj[com_mask]
+    targ_com = targ[com_mask]
+    corr_mask = ~com_mask
+    c1, c2 = plt.get_cmap(com_cmap)([0.0, 1.0])
+    ax.plot(
+        xs,
+        proj_com[targ_com == 0].T,
+        color=c1,
+        lw=lw_com,
+    )
+    ax.plot(
+        xs,
+        proj_com[targ_com == 1].T,
+        color=c2,
+        lw=lw_com,
+    )
+
+    proj_corr = proj[corr_mask]
+    targ_corr = targ[corr_mask]
+    c1, c2 = plt.get_cmap(corr_cmap)([0.0, 1.0])
+    ax.plot(
+        xs,
+        proj_corr[targ_corr == 0].T,
+        color=c1,
+        lw=lw_corr,
+    )
+    ax.plot(
+        xs,
+        proj_corr[targ_corr == 1].T,
+        color=c2,
+        lw=lw_corr,
+    )
+
+
+def _rotate_xy_predictors(preds, xy_ind, angs, correct_180=True):
+    out = []
+    for i, pred in enumerate(preds):
+        angs_i = angs[i] + correct_180 * 180
+        rads = -np.radians(angs_i)[:, None]
+        xys = pred[:, xy_ind]
+        x_rot = xys[:, 0] * np.cos(rads) + xys[:, 1] * np.sin(rads)
+        y_rot = -xys[:, 0] * np.sin(rads) + xys[:, 1] * np.cos(rads)
+        new_pred = np.zeros_like(pred)
+        new_pred[:] = pred
+        new_pred[:, xy_ind] = np.stack((x_rot, y_rot), axis=1)
+        out.append(new_pred)
+    return out
+
+
+fields_all = (
+    "pos_x",
+    "pos_y",
+    "rotation_tc",
+    "UserVars.RestructuredVRData.Joystick_Position_X",
+    "UserVars.RestructuredVRData.Joystick_Position_Y",
+    "eye_x",
+    "eye_y",
+)
+cond_fields_all = (True, True, True, False, False, False, False)
+rot_fields_all = (False, False, True, False, False, False, False)
+
+
+def make_com_predictors(
+    data,
+    timing_key=None,
+    time_begin=-1000,
+    time_end=1000,
+    window=50,
+    binstep=10,
+    time_zero_field="approach_start",
+    fields=fields_all,
+    cond_fields=cond_fields_all,
+    rot_fields=rot_fields_all,
+):
+    predictors_orig, xs = data.get_field_timeseries(
+        fields,
+        timing_key=timing_key,
+        begin=time_begin,
+        end=time_end,
+        binsize=window,
+        binstep=binstep,
+        time_zero_field=time_zero_field,
+    )
+    conds = npa.make_unique_conds(data)
+    cond_fields = np.array(cond_fields)
+    predictors_conds = _norm_cond_predictors(
+        list(po[:, cond_fields] for po in predictors_orig),
+        conds,
+    )
+    predictors_conds = _rad_to_xy_predictors(predictors_conds, (False, False, True))
+    predictors_conds = _rotate_xy_predictors(
+        predictors_conds, (0, 1), list(c[:, -1] for c in conds)
+    )
+    predictors = []
+    for i, pc in enumerate(predictors_conds):
+        predictors.append(
+            np.concatenate(
+                (pc, predictors_orig[i][:, np.logical_not(cond_fields)]), axis=1
+            )
+        )
+    return predictors, xs
+
+
+@gpl.ax_adder()
+def plot_traj(pred, y, colors=None, ax=None, **kwargs):
+    u_y = np.unique(y)
+    if colors is None:
+        colors = (None,) * len(u_y)
+    for i, y_i in enumerate(u_y):
+        m_i = y == y_i
+        ax.plot(pred[m_i, 0].T, pred[m_i, 1].T, color=colors[i], **kwargs)
+
+
+def template_change_of_mind(
+    data,
+    time_start=CHANGE_OF_MIND_START,
+    time_end=1000,
+    time_begin=-1000,
+    window=20,
+    binstep=10,
+    choice_field="chose_right",
+):
+    """Determine which trials have predictors indicating change of mind.
+
+    Parameters
+    ----------
+    data : Dataset
+       session date in Dataset format
+    subj_pos : tuple of strings
+       fields to apply change of mind logic to.
+    time_start : string
+       timing field to start analysis on (default="pre_choice_start")
+    time_end : float
+       how long to end analysis after time_start (default=1000)
+    window : float
+       window size for analysis (default=100)
+    binstep : float
+       step between different bins
+    norm_mask : tuple of booleans
+       set which predictors to normalize according to their unique condition values
+    rad_to_xy_mask : tuple of booleans
+       set which predictors to convert from radians to sin-cos
+    choice_field : string
+       which field indicates the animal's choice on a particular trial
+
+    Returns
+    -------
+    masks : ResultSequence
+       masks for every session where trials with a detected change of mind are true.
+    out : list of dictionaries
+       list with full analysis results from every session
+    xs : array_like
+       time points of the bins for the full analysis results
+    """
+    predictors, xs = make_com_predictors(
+        data,
+        time_zero_field=time_start,
+        time_begin=time_begin,
+        time_end=time_end,
+        window=window,
+        binstep=binstep,
+    )
+    choice = data[choice_field]
+    outs = []
+    masks = []
+    times = []
+    offset_times = data[time_start]
+    for i, pred_i in enumerate(predictors):
+        targ_i = choice[i].to_numpy()
+        out = na.targeted_dimensionality_reduction(
+            pred_i,
+            targ_i,
+            model=na.LinearSVCWrapper,
+            cv=skms.LeaveOneGroupOut(),
+        )
+        out["X"] = pred_i
+        out["y"] = targ_i
+        diff_i, mask_i, time_i = _detect_switch_time(
+            np.squeeze(out["test_projection"]), targ_i, xs
+        )
+        out["diff"] = diff_i
+        outs.append(out)
+        masks.append(mask_i)
+        times.append(time_i)
+    masks = gio.ResultSequence(masks)
+    times = gio.ResultSequence(times) + offset_times
+    return masks, times, outs, xs
+
+
+def compute_traj_var(proj, xs, n_win=10):
+    window = np.ones((1,) * (len(proj.shape) - 1) + (n_win,)) / n_win
+    conv_mask2 = sig.convolve(proj**2, window, mode="valid")
+    conv_mask = sig.convolve(proj, window, mode="valid")
+    std = np.mean(np.sqrt(conv_mask2 - conv_mask**2), axis=-2)
+
+    std = np.squeeze(
+        sig.convolve(np.std(proj, axis=-2, keepdims=True), window, mode="valid")
+    )
+    xs_conv = sig.convolve(xs, np.squeeze(window[0]), mode="valid")
+    return std, xs_conv
+
+
+def compute_avg_activity(proj):
+    mu = np.mean(proj, axis=(0, 1))
+    return mu
 
 
 def change_of_mind_trials(

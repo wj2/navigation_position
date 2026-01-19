@@ -10,11 +10,20 @@ import navigation_position.auxiliary as npa
 import navigation_position.analysis.view as npav
 import navigation_position.analysis.representations as npra
 import navigation_position.visualization as npv
+import navigation_position.analysis.change as npac
 
 config_path = "navigation_position/navigation_position/figures.conf"
 
 
 class NavigationFigure(pu.Figure):
+    def __init__(self, fsize, fig_key, *args, **kwargs):
+        cf = u.ConfigParserColor()
+        cf.read(config_path)
+        params = cf[fig_key]
+
+        self.params = params
+        super().__init__(fsize, params, *args, **kwargs)
+
     def load_all_data(self):
         if self.data.get("exper_data") is None:
             data_full = npa.load_sessions()
@@ -132,6 +141,319 @@ class ViewFigure(pu.Figure):
             axs=axs,
             color=color,
         )
+
+
+class ChangeOfMindBehavior(NavigationFigure):
+    def __init__(self, trial_string="uninstructed", fig_key="com_behavior", **kwargs):
+        fsize = (8, 8)
+        self.trial_string = trial_string
+        super().__init__(fsize, fig_key, **kwargs)
+
+    def make_gss(self):
+        gss = {}
+
+        gss["panel_behavioral_traj"] = self.get_axs(
+            pu.make_mxn_gridspec(self.gs, 2, 1, 0, 100, 0, 40, 5, 5),
+            squeeze=True,
+        )
+        gss["panel_stats"] = self.get_axs(
+            pu.make_mxn_gridspec(self.gs, 1, 3, 0, 40, 45, 100, 0, 8),
+            squeeze=True,
+        )
+        self.gss = gss
+
+    def panel_behavioral_traj(self, recompute=False):
+        key = "panel_behavioral_traj"
+        ax_pos, ax_dec = self.gss[key]
+
+        sess_ind = self.params.getint("traj_session")
+
+        time_start = self.params.get("time_zero_field")
+        time_begin = self.params.getfloat("time_begin")
+        time_end = self.params.getfloat("time_end")
+        window = self.params.getfloat("time_window")
+        binstep = self.params.getfloat("binstep")
+        choice_field = self.params.get("choice_field")
+        corr_field = self.params.get("correct_field")
+        data = self.get_trial_string_data()
+
+        if self.data.get(key) is None or recompute:
+            corr_trls = list(x.to_numpy() for x in data[corr_field])
+            out = npac.template_change_of_mind(
+                data,
+                time_start=time_start,
+                time_begin=time_begin,
+                time_end=time_end,
+                window=window,
+                binstep=binstep,
+                choice_field=choice_field,
+            )
+            self.data[key] = out + (corr_trls,)
+        masks, times, out_bhv, xs, corr_trls = self.data[key]
+        xy = out_bhv[sess_ind]["X"][:, :2]
+        side = out_bhv[sess_ind]["y"]
+        l_color = "r"
+        r_color = "b"
+        corr_lw = 0.1
+        corr_alpha = 0.5
+        npac.plot_traj(
+            xy, side, colors=(l_color, r_color), ax=ax_pos, lw=corr_lw, alpha=corr_alpha
+        )
+        npac.plot_traj(
+            xy[masks[sess_ind]],
+            side[masks[sess_ind]],
+            colors=(l_color, r_color),
+            ax=ax_pos,
+        )
+        ts = (times - data[time_start])[sess_ind][masks[sess_ind]].to_numpy()
+        trl_inds = np.where(masks[sess_ind])[0]
+        x_inds = np.argmin(np.abs(ts[:, None] - xs[None]), axis=1)
+        ax_pos.plot(xy[trl_inds, 0, x_inds], xy[trl_inds, 1, x_inds], "o", color="k")
+        # to plot decision time
+        # decision_ind = np.argmin(np.abs(xs))
+        # ax.plot(xy[:, 0, decision_ind], xy[:, 1, decision_ind], "o", color=(.8,) * 3)
+        gpl.clean_plot(ax_pos, 0)
+        gpl.make_xaxis_scale_bar(ax_pos, magnitude=1)
+        gpl.make_yaxis_scale_bar(ax_pos, magnitude=1)
+        ax_pos.set_aspect("equal")
+
+        tp = np.squeeze(out_bhv[sess_ind]["test_projection"])
+        ax_dec.plot(xs, tp[side == 0].T, color=l_color, lw=corr_lw, alpha=corr_alpha)
+        ax_dec.plot(xs, tp[side == 1].T, color=r_color, lw=corr_lw, alpha=corr_alpha)
+
+        tp_com = tp[masks[sess_ind]]
+        side_com = side[masks[sess_ind]]
+        ax_dec.plot(xs, tp_com[side_com == 0].T, color=l_color, lw=corr_lw)
+        ax_dec.plot(xs, tp_com[side_com == 1].T, color=r_color, lw=corr_lw)
+        ax_dec.plot(xs[x_inds], tp[trl_inds, x_inds], "o", color="k")
+        gpl.make_xaxis_scale_bar(ax_dec, magnitude=200)
+        gpl.make_yaxis_scale_bar(ax_dec, magnitude=2)
+        gpl.clean_plot(ax_dec, 0)
+
+    def panel_stats(self, recompute=False):
+        key = "panel_stats"
+        ax_frac, ax_corr, ax_time = self.gss[key]
+        data_key = "panel_behavioral_traj"
+
+        if self.data.get(data_key) is None or recompute:
+            self.panel_behavioral_traj(recompute=recompute)
+        masks, times, out_bhv, xs, corr_trls = self.data[data_key]
+        data = self.get_trial_string_data()
+        fracs = np.array(list(np.mean(x) for x in masks))
+        gpl.plot_trace_werr([0], fracs[:, None], conf95=True, ax=ax_frac)
+        ax_frac.scatter(np.zeros_like(fracs), fracs)
+        gpl.add_hlines(0, ax_frac)
+
+        stay_corr = np.array(
+            list(np.mean(x[~masks[i]]) for i, x in enumerate(corr_trls))
+        )
+        com_corr = np.array(list(np.mean(x[masks[i]]) for i, x in enumerate(corr_trls)))
+        corrs = np.stack((stay_corr, com_corr), axis=1)
+        ax_corr.plot([0, 1], corrs.T)
+        gpl.add_hlines(0.5, ax_corr)
+        gpl.clean_plot(ax_corr, 0)
+
+        time_start = self.params.get("time_zero_field")
+        times = times - data[time_start]
+        comb_times = np.concatenate(
+            list(t[masks[i]].to_numpy() for i, t in enumerate(times))
+        )
+        ax_time.hist(comb_times)
+        gpl.clean_plot(ax_time, 0)
+
+
+class ChangeOfMindNeural(NavigationFigure):
+    def __init__(
+        self,
+        trial_string="uninstructed",
+        region_dict=npra.default_region_dict,
+        fig_key="com_neural",
+        **kwargs,
+    ):
+        fsize = (5, 8)
+        self.region_dict = region_dict
+        self.trial_string = trial_string
+        super().__init__(fsize, fig_key, **kwargs)
+
+    def make_gss(self):
+        gss = {}
+
+        gss["panel_neural_traj"] = self.get_axs(
+            pu.make_mxn_gridspec(self.gs, 1, 2, 0, 40, 0, 100, 0, 5),
+            squeeze=True,
+            sharey="all",
+        )
+        gss["panel_neural_stats"] = self.get_axs(
+            pu.make_mxn_gridspec(self.gs, 3, 1, 45, 100, 55, 100, 5, 5),
+            sharex="all",
+            squeeze=True,
+        )
+        self.gss = gss
+
+    def panel_neural_traj(self, recompute=False):
+        key = "panel_neural_traj"
+        axs = self.gss[key]
+
+        sess_ind = self.params.getint("traj_session")
+
+        time_start = self.params.get("time_zero_field")
+        time_begin = self.params.getfloat("time_begin")
+        time_end = self.params.getfloat("time_end")
+
+        time_begin_short = self.params.getfloat("time_begin_short")
+        time_end_short = self.params.getfloat("time_end_short")
+
+        region = self.params.get("region")
+
+        window = self.params.getfloat("time_window")
+        binstep = self.params.getfloat("binstep")
+        choice_field = self.params.get("choice_field")
+        # corr_field = self.params.get("correct_field")
+        data = self.get_trial_string_data()
+
+        if self.data.get(key) is None or recompute:
+            out_bhv = npac.template_change_of_mind(
+                data,
+                time_start=time_start,
+                time_begin=time_begin,
+                time_end=time_end,
+                window=window,
+                binstep=binstep,
+                choice_field=choice_field,
+            )
+            times = out_bhv[1]
+            out_dict = {}
+            for k, regions in self.region_dict.items():
+                out_neur_tzf = npac.change_of_mind_populations(
+                    data,
+                    time_start=time_start,
+                    time_begin=time_begin,
+                    time_end=time_end,
+                    window=window,
+                    binstep=binstep,
+                    choice_field=choice_field,
+                    regions=regions,
+                )
+                out_neur_com_tz = npac.change_of_mind_populations(
+                    data,
+                    time_start=time_start,
+                    time_begin=time_begin_short,
+                    time_end=time_end_short,
+                    window=window,
+                    binstep=binstep,
+                    choice_field=choice_field,
+                    time_zeros=times,
+                    regions=regions,
+                )
+                out_dict[k] = out_neur_tzf, out_neur_com_tz
+            self.data[key] = out_bhv, out_dict
+        masks, times, out_bv, xs = self.data[key][0]
+        pops_tzf, xs_tzf_r = self.data[key][1][region][0]
+
+        proj = np.squeeze(pops_tzf[sess_ind]["test_projection"])
+        targ = pops_tzf[sess_ind]["y"]
+        com_mask = masks[sess_ind]
+        npac.plot_com_heatmap_and_averages(proj, targ, xs_tzf_r, com_mask, ax=axs[0])
+        # npac.plot_flux_heatmap(proj[~com_mask], targ[~com_mask], xs_tzf_r, ax=axs[0])
+        m1 = np.logical_and(targ == 0, com_mask)
+        m2 = np.logical_and(targ == 1, com_mask)
+        eg_lw = 0.3
+        axs[0].plot(xs_tzf_r, proj[m1].T, color="m", lw=eg_lw)
+        axs[0].plot(xs_tzf_r, proj[m2].T, color="g", lw=eg_lw)
+        gpl.make_xaxis_scale_bar(axs[0], 200)
+        gpl.make_yaxis_scale_bar(axs[0], 2)
+
+        pops_tz, xs_tz_r = self.data[key][1][region][1]
+        proj = np.squeeze(pops_tz[sess_ind]["test_projection"])
+        targ = pops_tz[sess_ind]["y"]
+        com_mask = masks[sess_ind]
+        npac.plot_com_heatmap_and_averages(
+            proj, targ, xs_tz_r, com_mask, n_x_bins=15, ax=axs[1]
+        )
+        m1 = np.logical_and(targ == 0, com_mask)
+        m2 = np.logical_and(targ == 1, com_mask)
+        axs[1].plot(xs_tz_r, proj[m1].T, color="m", lw=eg_lw)
+        axs[1].plot(xs_tz_r, proj[m2].T, color="g", lw=eg_lw)
+
+        gpl.make_xaxis_scale_bar(axs[1], 200)
+        gpl.make_yaxis_scale_bar(axs[1], 2)
+
+    def panel_neural_stats(
+        self,
+        recompute=False,
+    ):
+        key = "panel_neural_stats"
+        ax_avg, ax_std, ax_std_null = self.gss[key]
+        region = self.params.get("region")
+
+        key_data = "panel_neural_traj"
+        if self.data.get(key_data) is None or recompute:
+            self.panel_neural_traj(recompute=recompute)
+        masks = self.data[key_data][0][0]
+        pops_app, xs_r_app = self.data[key_data][1][region][0]
+        pops_com, xs_r = self.data[key_data][1][region][0]
+        masks = list(x for i, x in enumerate(masks) if pops_app[i] is not None)
+        pops_app = list(x for x in pops_app if x is not None)
+        pops_com = list(x for x in pops_com if x is not None)
+
+        n_var_window = self.params.getint("var_window_width")
+        n_ts = pops_com[0]["X"].shape[-1]
+
+        n_nulls = 100
+        avgs = np.zeros((2, len(pops_com), n_ts))
+        std_tc = np.zeros((2, len(pops_com), n_ts - n_var_window + 1))
+        std_null_tc = np.zeros_like(std_tc)
+        std_null_tc = np.zeros((n_nulls,) + std_tc.shape)
+        xs_app_mask = np.logical_and(xs_r_app >= xs_r[0], xs_r_app <= xs_r[-1])
+        for i, pop in enumerate(pops_com):
+            r_i = pop["X"]
+            r_i_app = pops_app[i]["X"][..., xs_app_mask]
+            p_i = np.squeeze(pop["test_projection"])
+            p_i_app = np.squeeze(pops_app[i]["test_projection"])[..., xs_app_mask]
+            m_i = masks[i]
+            rng = np.random.default_rng()
+            null_vec = u.make_unit_vector(
+                rng.normal(0, 1, size=(n_nulls, r_i_app.shape[1]))
+            )[:, None, :, None]
+
+            p_null_i = np.sum(r_i[None] * null_vec, axis=-2)
+            std_null_tc[:, 0, i], _ = npac.compute_traj_var(
+                p_null_i[:, m_i],
+                xs_r,
+                n_win=n_var_window,
+            )
+            std_null_tc[:, 1, i], _ = npac.compute_traj_var(
+                p_null_i[:, ~m_i],
+                xs_r,
+                n_win=n_var_window,
+            )
+
+            std_tc[0, i], xs_conv = npac.compute_traj_var(
+                p_i[m_i], xs_r, n_win=n_var_window
+            )
+            std_tc[1, i], xs_conv = npac.compute_traj_var(
+                p_i_app[~m_i], xs_r, n_win=n_var_window
+            )
+            avgs[0, i] = npac.compute_avg_activity(r_i[m_i])
+            avgs[1, i] = npac.compute_avg_activity(r_i_app[~m_i])
+        sess_lw = .4
+        l_ = gpl.plot_trace_werr(xs_conv, std_tc[0], ax=ax_std)
+        ax_std.plot(xs_conv, std_tc[0].T, color=l_[0].get_color(), lw=sess_lw)
+        l_ = gpl.plot_trace_werr(xs_conv, std_tc[1], ax=ax_std)
+        ax_std.plot(xs_conv, std_tc[1].T, color=l_[0].get_color(), lw=sess_lw)
+
+        std_null_tc = np.mean(std_null_tc, axis=0)
+        l_ = gpl.plot_trace_werr(xs_conv, std_null_tc[0], ax=ax_std_null)
+        ax_std_null.plot(xs_conv, std_null_tc[0].T, color=l_[0].get_color(), lw=sess_lw)
+        l_ = gpl.plot_trace_werr(xs_conv, std_null_tc[1], ax=ax_std_null)
+        ax_std_null.plot(xs_conv, std_null_tc[1].T, color=l_[0].get_color(), lw=sess_lw)
+
+        l_ = gpl.plot_trace_werr(xs_r, avgs[0], ax=ax_avg)
+        ax_avg.plot(xs_r, avgs[0].T, color=l_[0].get_color(), lw=sess_lw)
+        l_ = gpl.plot_trace_werr(xs_r, avgs[1], ax=ax_avg)
+        ax_avg.plot(xs_r, avgs[1].T, color=l_[0].get_color(), lw=sess_lw)
+        gpl.add_vlines(0, ax_avg)
+        gpl.add_vlines(0, ax_std)
 
 
 class FixationAnalysis(NavigationFigure):
