@@ -37,11 +37,12 @@ dependencies = [
   "ragged>=0.2",
   "torch>=2.10",
   "pyro-ppl>=1.9",
+  "general[torch] @ git+https://github.com/wj2/general-neural.git"
 ]
 
 [project.optional-dependencies]
 general = [
-  "general[tensorflow] @ git+https://github.com/wj2/general-neural.git",
+  "general[torch] @ git+https://github.com/wj2/general-neural.git",
 ]
 
 [project.scripts]
