@@ -24,6 +24,7 @@ def create_parser():
         "--output_template",
         default="dec_{region}{conds}-w{winsize}-s{stepsize}-shift{shift}_{date}_{jobid}",
     )
+    parser.add_argument("--data_folder", default=npa.BASEFOLDER)
     parser.add_argument("--winsize", default=500, type=int)
     parser.add_argument("--stepsize", default=50, type=int)
     parser.add_argument("--jobid", default="0000")
@@ -54,7 +55,7 @@ def main():
 
     data = gio.Dataset.from_readfunc(
         npa.load_gulli_hashim_data_folder,
-        npa.BASEFOLDER,
+        args.data_folder,
         load_only_nth_files=args.use_inds,
     )
     data_use = npa.mask_completed_trials(data, correct_only=args.correct_only)
