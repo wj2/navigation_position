@@ -5,6 +5,7 @@ import sklearn.manifold as skm
 import sklearn.decomposition as skd
 import sklearn.preprocessing as skp
 import itertools as it
+import awkward as ak
 
 import general.utility as u
 import general.plotting as gpl
@@ -40,6 +41,135 @@ def _make_kernel(ns, bins, sims, n_dims=1):
     count, _ = np.histogramdd(ns, bins=(bins,) * ns_dims)
     normalized = tr / (count * n_dims)
     return normalized
+
+
+def decorate_trajectory(
+    ax,
+    times,
+    *args,
+    xs=None,
+    ci=None,
+    markers=("+", "o", "s", "^", "1", "D", "*", "x"),
+    marker_size=5,
+    color_replace=None,
+    color_mult=0.9,
+    cmap="bwr",
+    zorder=10000,
+    **kwargs,
+):
+    cm = plt.get_cmap(cmap)
+    if color_replace is None:
+        color_replace = {}
+    if xs is None:
+        xs = args[0]
+    for j, (m, ti) in enumerate(times.items()):
+        if (ci_use := color_replace.get(m)) is None:
+            ci_use = ci
+        else:
+            ci_use = ci_use * color_mult
+        if not u.check_list(ci_use) or len(ci_use) == 1:
+            ci_use = np.ones(len(xs)) * ci_use
+
+        if not np.isnan(ti):
+            ind = np.argmin(np.abs(ti - xs))
+            color = cm(ci_use[ind])
+            ax.plot(
+                *list(x[ind] for x in args),
+                marker=markers[j],
+                color=color,
+                ms=marker_size,
+                zorder=zorder,
+                **kwargs,
+            )
+
+
+def plot_decorated_trajectory(
+    traj_all,
+    times,
+    xs,
+    color_field,
+    plot_inds=None,
+    ax=None,
+    start=0,
+    end=None,
+    skip=5,
+    cmap="bwr",
+    lw=0.2,
+    color_mult=0.8,
+    marker_size=5,
+    markers=("+", "o", "s", "^", "1", "D", "*", "x"),
+    three_d=True,
+    color_replace=None,
+):
+    if ax is None:
+        if three_d:
+            ax_kw = {"subplot_kw": {"projection": "3d"}}
+        else:
+            ax_kw = {}
+        f, ax = plt.subplots(1, 1, **ax_kw)
+    if color_replace is None:
+        color_replace = {}
+    if end is None:
+        end = len(traj_all)
+    if plot_inds is None:
+        plot_inds = range(start, end, skip)
+    for i in plot_inds:
+        traj = ak.to_numpy(traj_all[i])
+        pi = ak.to_numpy(color_field[i]) * color_mult
+        if not u.check_list(pi) or len(pi) == 1:
+            pi = np.ones(traj.shape[1]) * pi
+        gpl.plot_colored_line(*traj, lw=lw, col_inds=pi, ax=ax, cmap=cmap)
+        xs_i = ak.to_numpy(xs[i])
+        times_i = {k: t[i] for k, t in times.items()}
+        decorate_trajectory(
+            ax,
+            times_i,
+            *traj,
+            xs=xs_i,
+            color_replace=color_replace,
+            color_mult=color_mult,
+            marker_size=marker_size,
+            markers=markers,
+            ci=pi,
+        )
+    ax.set_aspect("equal")
+
+
+def plot_trial(
+    xs,
+    *activities,
+    axs=None,
+    colors=None,
+    fwid=10,
+    lw=0.2,
+    spacer=0.5,
+    firing_scale=5,
+    markers=None,
+):
+    if colors is None:
+        colors = ("k", "g", "r")
+    if axs is None:
+        gs = plt.GridSpec(10, 10)
+        f = plt.figure(figsize=(fwid, fwid))
+        ax1 = f.add_subplot(gs[:9, :])
+        ax2 = f.add_subplot(gs[9, :], sharex=ax1)
+    accum = 0
+    for j, activity in enumerate(activities):
+        for i, x in enumerate(activity):
+            mu = np.mean(x)
+            ax1.plot(xs, x - mu + accum, zorder=i, lw=lw, color=colors[j])
+            accum = accum + spacer
+        ax2.plot(xs, np.mean(activity, axis=0), color=colors[j])
+    gpl.make_yaxis_scale_bar(ax1, firing_scale, double=False, anchor=0)
+    if markers is not None:
+        gpl.add_vlines(markers, ax1)
+        gpl.add_vlines(markers, ax2)
+
+    gpl.clean_plot(ax1, 0)
+    gpl.clean_plot_bottom(ax1)
+    gpl.make_yaxis_scale_bar(ax2, firing_scale, double=False, anchor=0)
+    gpl.make_xaxis_scale_bar(ax2, 1000, anchor=0, double=False)
+    gpl.clean_plot(ax2, 0)
 
 
 def apply_row_col_masks(rm, cm, *mats):
@@ -128,7 +258,13 @@ def visualize_strict_side_fixations(
             else:
                 label = ""
             gpl.plot_trace_werr(
-                xs, ys, confstd=True, ax=axs[i], label=label, color=colors[j], **kwargs,
+                xs,
+                ys,
+                confstd=True,
+                ax=axs[i],
+                label=label,
+                color=colors[j],
+                **kwargs,
             )
         axs[i].set_title(k)
         gpl.add_hlines(0.5, axs[i])

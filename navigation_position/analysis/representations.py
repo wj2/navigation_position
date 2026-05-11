@@ -13,6 +13,7 @@ import sklearn.preprocessing as skp
 import imblearn.under_sampling as imb_us
 import itertools as it
 import pandas as pd
+import awkward as ak
 
 import torch.nn as nn
 
@@ -22,6 +23,7 @@ import general.utility as u
 import general.data_io as gio
 import general.torch.training as gtt
 import general.torch.rnns as gtrnn
+import general.plotting as gpl
 import navigation_position.auxiliary as npa
 from . import view as npav
 
@@ -60,27 +62,132 @@ def _filter_neg(x):
 
 
 default_waypoint_keys = (
-    "UserVars.VR_Trial.Additional_Positions.x",
-    "UserVars.VR_Trial.Additional_Positions.z",
+    "waypoints_x",
+    "waypoints_y",
+)
+
+default_time_keys = (
+    "nav_start",
+    "waypoint_time_1",
+    "waypoint_time_2",
+    "waypoint_time_3",
+    "nav_end",
+    "post_rotation_start",
+    "pre_choice_start",
+    "choice_end",
 )
 
 
-class TimeRemover:
-    def __init__(self, model=sklm.Ridge, **kwargs):
-        self.model = model(**kwargs)
+def get_times(data, time_keys=default_time_keys, ref_key="nav_start"):
+    return list(
+        {m: (data[m][sess_ind] - data[ref_key][sess_ind]).to_numpy() for m in time_keys}
+        for sess_ind in range(len(data))
+    )
 
-    def fit(self, X, y):
-        self.model = self.model.fit(X, y)
-        vec = self.model.coef_
-        self.null_mat = spla.null_space(vec[None])
-        return self
 
-    def transform(self, X, y=None):
-        return X @ self.null_mat
+def get_checkpoint_pts(neur, xs, times):
+    pts = np.zeros((len(neur), neur[0].shape[0], len(times)))
+    for i, ni in enumerate(neur):
+        ni_arr = ak.to_numpy(ni)
+        for j, t in enumerate(times):
+            if np.isnan(t[i]):
+                pts[i, :, j] = np.nan
+            else:
+                ind = np.argmin(np.abs(xs[i] - t[i]))
+                pts[i, :, j] = ni_arr[..., ind]
+    return pts
 
-    def fit_transform(self, X, y=None):
-        self.fit(X, y)
-        return self.transform(X, y)
+
+def remove_checkpoint_subspace(neur, xs, times, use_means=True, var_thr=0.999):
+    pts = get_checkpoint_pts(neur, xs, times)
+    if use_means:
+        pt_subspace = np.nanmean(pts, axis=0).T
+        time_subspace = np.nanmean(pts, axis=-1)
+        combined_subspace = np.concatenate((pt_subspace, time_subspace), axis=0)
+    else:
+        combined_subspace = np.concatenate(pts, axis=-1).T
+        mask = np.logical_not(np.any(np.isnan(combined_subspace), axis=1))
+        combined_subspace = combined_subspace[mask]
+    remover = na.OppositePCA(var_thr)
+    remover.fit(combined_subspace)
+    return na.RaggedPipelineTC(remover).transform(neur)
+
+
+def subtract_checkpoint_mu(neur, xs, times):
+    pts = get_checkpoint_pts(neur, xs, times)
+    mu = np.nanmean(pts, axis=-1, keepdims=True)
+    return neur - mu
+
+
+@gpl.ax_adder()
+def summary_decoding_plot(
+    out,
+    xs,
+    rules,
+    ew=0,
+    ns=1,
+    ew_color="g",
+    ns_color="b",
+    both_color="r",
+    alpha=0.1,
+    ax=None,
+    chance=0.5,
+    **kwargs,
+):
+    ew_rule = []
+    ns_rule = []
+    both_rule = []
+    for i, sc_i in enumerate(out["score"]):
+        r_i = np.unique(rules[i])
+        if 0 in r_i and 1 in r_i:
+            color = "r"
+            both_rule.append(sc_i)
+        elif 0 in r_i:
+            color = "g"
+            ew_rule.append(sc_i)
+        elif 1 in r_i:
+            color = "b"
+            ns_rule.append(sc_i)
+        gpl.plot_trace_werr(
+            xs, sc_i, confstd=True, ax=ax, color=color, alpha=alpha, line_alpha=alpha
+        )
+    gpl.plot_trace_werr(xs, np.mean(ew_rule, axis=1), ax=ax, color="g")
+    gpl.plot_trace_werr(xs, np.mean(ns_rule, axis=1), ax=ax, color="b")
+    gpl.add_hlines(chance, ax)
+
+
+def _less_than(x, ind=0, thr=500):
+    return x[:, ind] < thr
+
+
+def side_decoder(
+    Xs,
+    ys,
+    masks=None,
+    ind=0,
+    label_func=_less_than,
+    test_prop=0.1,
+    n_folds=100,
+    **kwargs,
+):
+    outs = []
+    if masks is None:
+        masks = list(np.ones(len(X), dtype=bool) for X in Xs)
+    for i, X_i in enumerate(Xs):
+        y_i = label_func(ys[i], ind=ind)
+        m_i = masks[i]
+        out_i = na.fold_skl_shape(
+            X_i[m_i],
+            y_i[m_i],
+            n_folds,
+            mean=False,
+            test_prop=test_prop,
+            label_tc=True,
+            return_projection=True,
+            **kwargs,
+        )
+        outs.append(out_i)
+    return u.aggregate_dictionary(outs)
 
 
 def cluster_decoding(
@@ -150,16 +257,13 @@ def collapsed_decoding(
     X_tc : N trials, K neurons, T time points
     y_tc : N_trials, T time points
     """
-    trl_mask = np.var(y_tc, axis=-1) < var_thr
-    X_tc = X_tc[trl_mask]
-    y = y_tc[trl_mask][..., 0]
-    if use_sum:
-        X_coll = np.sum(X_tc, axis=-1)
-    else:
-        X_coll = u.combine_dimensions(X_tc, 1, 2)
-    pipe = na.make_model_pipeline(est, pca=pca, **kwargs)
+
+    pipe = na.make_model_pipeline(est, pca=pca, single_tc=True, **kwargs)
     return skms.cross_validate(
-        pipe, X_coll, y, cv=skms.ShuffleSplit(n_folds, test_size=test_size)
+        pipe,
+        X_tc,
+        y_tc,
+        cv=skms.ShuffleSplit(n_folds, test_size=test_size),
     )
 
 

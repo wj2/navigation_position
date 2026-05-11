@@ -5,7 +5,6 @@ import itertools as it
 
 import general.plotting as gpl
 import general.neural_analysis as na
-import general.tf.networks as gtfn
 import general.data_io as gio
 import navigation_position.auxiliary as npa
 

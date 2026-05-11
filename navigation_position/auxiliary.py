@@ -40,7 +40,9 @@ def get_date_list(folder=BASEFOLDER, template=session_template):
 
 
 def load_dated_session(
-    date, dated_session_template=dated_session_template, **kwargs,
+    date,
+    dated_session_template=dated_session_template,
+    **kwargs,
 ):
     use_template = dated_session_template.format(date=date)
     data = load_sessions(session_template=use_template, **kwargs)
@@ -55,7 +57,6 @@ def load_session_files(
     good_neurs="good_neurons.pkl",
 ):
     out_dict = {}
-    out_dict["spikes"] = pd.read_pickle(open(os.path.join(folder, spikes), "rb"))
     bhv_fl = u.get_matching_files(folder, bhv)[0]
     out_dict["bhv"] = pd.read_pickle(open(bhv_fl, "rb"))
     try:
@@ -66,16 +67,27 @@ def load_session_files(
     except IndexError:
         print("  no dlc file found.")
 
-    out_dict["good_neurs"] = pd.read_pickle(
-        open(os.path.join(folder, good_neurs), "rb")
-    )
+    spike_path = os.path.join(folder, spikes)
+    if os.path.isfile(spike_path):
+        out_dict["spikes"] = pd.read_pickle(open(spike_path, "rb"))
+    else:
+        print("no spiking data found")
+    good_neurs_path = os.path.join(folder, good_neurs)
+    if os.path.isfile(good_neurs_path):
+        out_dict["good_neurs"] = pd.read_pickle(open(good_neurs_path, "rb"))
+    else:
+        print("no good_neurs file found")
     return out_dict
 
 
-def organize_spikes(spikes, neur_info):
-    neur_regions = tuple(neur_info["region"])
+def organize_spikes(spikes, neur_info=None):
     n_trls = len(spikes)
-    neur_regions_all = (neur_regions,) * n_trls
+    if neur_info is not None:
+        neur_regions = tuple(neur_info["region"])
+        neur_regions_all = (neur_regions,) * n_trls
+    else:
+        n_neurs = len(spikes.iloc[0])
+        neur_regions_all = (("unknown",) * n_neurs,) * n_trls
     spike_times = []
     for i, (_, row) in enumerate(spikes.iterrows()):
         spk_times_i = np.zeros(len(row), dtype=object)
@@ -121,6 +133,8 @@ info_rename_dict = {
     "UserVars.RestructuredVRData.Position_X": "pos_x",
     "UserVars.RestructuredVRData.Position_Y": "pos_z",
     "UserVars.RestructuredVRData.Position_Z": "pos_y",
+    "UserVars.RestructuredVRData.Joystick_Position_X": "joy_x",
+    "UserVars.RestructuredVRData.Joystick_Position_Y": "joy_y",
     "UserVars.VR_Trial.Target_Positions.x": "targ_x",
     "UserVars.VR_Trial.Target_Positions.z": "targ_y",
     "UserVars.VR_Trial.Distractor_Positions.x": "dist_x",
@@ -195,7 +209,7 @@ def get_saccade_info(
         out_start_times.append(start_times_i)
         out_end_times.append(end_times_i)
     return out_start_times, out_end_times, out_start, out_end
-            
+
 
 def combine_temporal_keys(data, keys, filt_func=None, tzf=None, tbeg=0, tend=None):
     tks = data[list(keys)]
@@ -365,6 +379,17 @@ def discretize_rotation(rots, cents=(0, 90, 180, 270)):
     return bins
 
 
+def discretize_rotation_quadrants_tc(rots, cents=(45, 135, 225, 315)):
+    """
+    rots : N x T
+    """
+    cents = np.expand_dims(cents, (0, 1))
+    rots = np.expand_dims(rots, -1)
+    ang = np.abs(u.normalize_periodic_range(rots - cents, radians=False))
+    inds = np.argmin(ang, axis=-1)
+    return inds
+
+
 def get_last_choices(choices, mask=None, n_back=1):
     if mask is None:
         mask = np.ones(len(choices), dtype=bool)
@@ -501,6 +526,38 @@ def extract_tc_position(xs, ys, ts):
     return x_pos, y_pos
 
 
+def _make_sincos_rotation_tc(rot_tc):
+    sins = []
+    coss = []
+    for i, rtc in enumerate(rot_tc.to_numpy()):
+        sin_i, cos_i = u.radian_to_sincos(np.radians(rtc), axis=0)
+        sins.append(sin_i)
+        coss.append(cos_i)
+    return pd.Series(sins), pd.Series(coss)
+
+
+def get_waypoint_times(xs, ys, targ_xs, targ_ys, get_thr=1, max_wps=5):
+    times_all = list(np.ones(len(xs)) * np.nan for _ in range(max_wps))
+    n_wps = np.zeros(len(xs))
+    for i, xi in enumerate(xs):
+        yi = ys.iloc[i]
+        xy_i = np.stack((xi, yi), axis=1)
+
+        t_x = targ_xs.iloc[i]
+        t_y = targ_ys.iloc[i]
+        targ_list = u.check_list(t_x)
+        if targ_list or t_x != -1:
+            t_xy_i = np.stack((t_x, t_y), axis=-1)
+            if len(t_xy_i.shape) == 1:
+                t_xy_i = t_xy_i[None]
+            dist_i = np.sqrt(np.sum((xy_i[None] - t_xy_i[:, None]) ** 2, axis=-1))
+            times = np.argmin(dist_i, axis=1)
+            for j, time in enumerate(times):
+                times_all[j][i] = time
+            n_wps[i] = len(times)
+    return n_wps, times_all
+
+
 def load_gulli_hashim_data_folder(
     folder,
     session_template=session_template,
@@ -510,6 +567,9 @@ def load_gulli_hashim_data_folder(
     load_only_nth_files=None,
     date_task_dict=date_task_dict,
     skip_dlc=False,
+    require_dlc=False,
+    skip_neural=False,
+    require_neural=False,
 ):
     if rename_dicts is None:
         rename_dicts = (timing_rename_dict, info_rename_dict)
@@ -526,14 +586,28 @@ def load_gulli_hashim_data_folder(
         load_only_nth_files=load_only_nth_files,
     )
     for fl, fl_info, data_fl in folder_gen:
-        dates.append(fl_info["date"])
-        monkeys.append(fl_info["animal"])
-        n_neurs.append(len(data_fl["good_neurs"]))
-        neur_regions, spikes = organize_spikes(
-            data_fl["spikes"],
-            data_fl["good_neurs"],
-        )
         data_all = data_fl["bhv"]["data_frame"]
+        if "spikes" in data_fl.keys() and not skip_neural:
+            neur_regions, spikes = organize_spikes(
+                data_fl["spikes"],
+                data_fl.get("good_neurs"),
+            )
+            if len(data_all) > len(spikes):
+                diff = len(data_all) - len(spikes)
+                print(
+                    "difference in length between data ({}) and spikes ({})"
+                    "in file {}".format(len(data_all), len(spikes), fl)
+                )
+                data_all = data_all[:-diff].copy()
+            data_all["spikeTimes"] = spikes
+            data_all["neur_regions"] = neur_regions
+            n_neurs_fl = len(neur_regions)
+        elif require_neural:
+            continue
+        else:
+            print("skipping neural")
+            n_neurs_fl = 0
+
         if "dlc_markers" in data_fl.keys():
             if skip_dlc:
                 print("  skipping dlc")
@@ -553,15 +627,11 @@ def load_gulli_hashim_data_folder(
                     )
                     new_frames.append(np.array(cf)[mask])
                 data_all["video_frames"] = new_frames
-        if len(data_all) > len(spikes):
-            diff = len(data_all) - len(spikes)
-            print(
-                "difference in length between data ({}) and spikes ({})"
-                "in file {}".format(len(data_all), len(spikes), fl)
-            )
-            data_all = data_all[:-diff].copy()
-        data_all["spikeTimes"] = spikes
-        data_all["neur_regions"] = neur_regions
+        elif require_dlc:
+            continue
+        dates.append(fl_info["date"])
+        monkeys.append(fl_info["animal"])
+        n_neurs.append(n_neurs_fl)
         data_all["completed_trial"] = np.isin(data_all["TrialError"], (0, 6))
         data_all["correct_trial"] = data_all["TrialError"] == 0
         data_all = rename_fields(data_all, *rename_dicts)
@@ -582,7 +652,7 @@ def load_gulli_hashim_data_folder(
         else:
             data_all["relevant_position"] = data_all[task_key[0]]
             data_all["irrelevant_position"] = data_all[task_key[1]]
-        data_all["white_right"] = np.logical_or(
+        wr = np.logical_or(
             np.logical_and(
                 data_all["relevant_position"] == 1,
                 data_all["target_right"] == 1,
@@ -592,7 +662,8 @@ def load_gulli_hashim_data_folder(
                 data_all["target_right"] == 0,
             ),
         )
-        data_all["pink_right"] = np.logical_or(
+        data_all["white_right"] = pd.Series(wr, dtype="boolean")
+        pr = np.logical_or(
             np.logical_and(
                 data_all["relevant_position"] == 1,
                 data_all["target_right"] == 1,
@@ -602,6 +673,7 @@ def load_gulli_hashim_data_folder(
                 data_all["target_right"] == 0,
             ),
         )
+        data_all["pink_right"] = pd.Series(pr, dtype="boolean")
         data_all.loc[ew_mask, "pink_right"] = pd.NA
         data_all.loc[ns_mask, "white_right"] = pd.NA
         data_all["pre_choice_rotation"] = extract_time_field(
@@ -609,6 +681,8 @@ def load_gulli_hashim_data_folder(
             "post_rotation_end",
             "rotation_tc",
         )
+        out = _make_sincos_rotation_tc(data_all["rotation_tc"])
+        data_all["rotation_tc_sin"], data_all["rotation_tc_cos"] = out
         data_all["choice_pos_x"], data_all["choice_pos_y"] = extract_tc_position(
             data_all["pos_x"],
             data_all["pos_y"],
@@ -617,6 +691,7 @@ def load_gulli_hashim_data_folder(
         data_all["choice_rotation"] = discretize_rotation(
             data_all["pre_choice_rotation"],
         )
+        data_all["last_is_east"] = get_last_choices(data_all["IsEast"])
         data_all["last_choice_white"] = get_last_choices(data_all["chose_white"])
         data_all["last_correct_choice_white"] = get_last_choices(
             data_all["chose_white"],
@@ -626,6 +701,16 @@ def load_gulli_hashim_data_folder(
             data_all["chose_white"],
             mask=data_all["completed_trial"] == 1,
         )
+
+        n_wpts, waypoint_times = get_waypoint_times(
+            data_all["pos_x"],
+            data_all["pos_y"],
+            data_all["waypoints_x"],
+            data_all["waypoints_y"],
+        )
+        for i, wp_time in enumerate(waypoint_times):
+            data_all["waypoint_time_{}".format(i + 1)] = wp_time
+        data_all["n_waypoints"] = n_wpts
 
         out = find_crossings(data_all["pos_x"])
         data_all["border_crossing_x"], data_all["border_crossing_x_dir"] = out

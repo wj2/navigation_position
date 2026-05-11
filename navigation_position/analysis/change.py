@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 import sklearn.svm as skm
 import sklearn.model_selection as skms
 import scipy.signal as sig
-import dynamax.hidden_markov_model as dhmm
 import jax
 import jax.random as jr
 import functools as ft
@@ -11,7 +10,7 @@ import functools as ft
 import general.plotting as gpl
 import general.utility as u
 import general.neural_analysis as na
-import general.unsupervised_analysis as gua
+# import general.unsupervised_analysis as gua
 import general.data_io as gio
 import navigation_position.analysis.representations as npra
 import navigation_position.auxiliary as npa
